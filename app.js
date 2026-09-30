@@ -2,10 +2,10 @@
    คุมงานก่อสร้าง (PWA) — ใช้งานคนเดียว ข้อมูลเก็บในเครื่อง (IndexedDB)
    ===================================================================== */
 'use strict';
-var APP_VERSION = '2.1.0';
+var APP_VERSION = '2.3.0';
 
 /* ---------------- IndexedDB ---------------- */
-var DB_NAME = 'sitecontrol', DB_VER = 2;
+var DB_NAME = 'sitecontrol', DB_VER = 3;
 var STORES = ['projects', 'tasks', 'progress', 'daily', 'weekly', 'submittals', 'files', 'meta', 'installments', 'vos', 'eots'];
 var _db = null;
 function openDB() {
@@ -19,6 +19,7 @@ function openDB() {
         var os = db.createObjectStore(s, { keyPath: s === 'meta' ? 'key' : 'id' });
         if (s !== 'projects' && s !== 'meta') os.createIndex('projectId', 'projectId');
       });
+      if (!db.objectStoreNames.contains('outbox')) db.createObjectStore('outbox', { keyPath: 'k' }); // คิวรอซิงก์
     };
     r.onsuccess = function () { _db = r.result; res(_db); };
     r.onerror = function () { rej(r.error); };
@@ -320,13 +321,17 @@ function confirmBox(msg, okText) {
 
 /* ---------------- files (รูปภาพ/PDF เก็บเป็น Blob ในเครื่อง) ---------------- */
 function filesOf(kind, ref) { return S.files.filter(function (f) { return f.kind === kind && String(f.ref) === String(ref); }).sort(function (a, b) { return (a.created || '') < (b.created || '') ? -1 : 1; }); }
-function fileUrl(f) { if (!S.urls[f.id]) S.urls[f.id] = URL.createObjectURL(f.blob); return S.urls[f.id]; }
+function fileUrl(f) { if (!f.blob) return ''; if (!S.urls[f.id]) S.urls[f.id] = URL.createObjectURL(f.blob); return S.urls[f.id]; }
 function hydrateImgs() {
+  var jobs = [];
   $$('[data-fimg]').forEach(function (el) {
     var f = S.files.filter(function (x) { return x.id === el.dataset.fimg; })[0]; if (!f) return;
-    var u = fileUrl(f); if (el.tagName === 'IMG') el.src = u; else { el.style.backgroundImage = 'url("' + u + '")'; el.textContent = ''; }
+    var show = function () { var u = fileUrl(f); if (!u) return; if (el.tagName === 'IMG') el.src = u; else { el.style.backgroundImage = 'url("' + u + '")'; el.textContent = ''; } };
     el.removeAttribute('data-fimg');
+    if (f.blob) show();
+    else if (f.driveId && typeof ensureBlob === 'function') { if (el.tagName !== 'IMG') el.innerHTML = '<span class="spin"></span>'; jobs.push(ensureBlob(f).then(show, function () { if (el.tagName !== 'IMG') el.textContent = 'โหลดรูปไม่ได้'; })); }
   });
+  return Promise.all(jobs);
 }
 function compressImage(file, doc) {
   var max = doc ? 2400 : 1600, q = doc ? 0.9 : 0.82;
@@ -375,9 +380,10 @@ function filesBlock(kind, ref, editable, allowPdf) {
       (editable ? '<button class="fdel" data-fdel="' + f.id + '" aria-label="ลบไฟล์">' + ic('trash') + '</button>' : '') + '</div>';
   }).join('') + '</div>';
 }
-function openFile(id) {
+async function openFile(id) {
   var f = S.files.filter(function (x) { return x.id === id; })[0]; if (!f) return;
-  var u = fileUrl(f);
+  if (!f.blob && f.driveId) { toast('กำลังโหลดไฟล์…'); try { await ensureBlob(f); } catch (e) { return toast(e.message, true); } }
+  var u = fileUrl(f); if (!u) return toast('ไม่พบไฟล์ในเครื่องนี้', true);
   if (f.mime === 'application/pdf') { window.open(u, '_blank', 'noopener'); return; }
   var lb = document.createElement('div'); lb.className = 'lightbox'; lb.innerHTML = '<img src="' + u + '" alt="' + esc(f.caption) + '">'; lb.onclick = function () { lb.remove(); }; document.body.appendChild(lb);
 }
@@ -391,12 +397,12 @@ async function vHome() {
   var old = !lastBk || diffDays(today(), D(lastBk.slice(0, 10))) >= 7;
   if (S.projects.length && old) h += '<div class="banner warn"><span class="grow">' + (lastBk ? 'สำรองข้อมูลครั้งล่าสุด ' + th(lastBk.slice(0, 10), true) : 'ยังไม่เคยสำรองข้อมูล') + ' – ข้อมูลอยู่ในเครื่องนี้เท่านั้น ควรสำรองสัปดาห์ละครั้ง</span><button class="btn sm acc" data-act="backup">สำรองเดี๋ยวนี้</button></div>';
   h = pageHead('โครงการทั้งหมด', S.projects.filter(function (p) { return !p.archived; }).length + ' โครงการที่กำลังดำเนินการ • ข้อมูลเก็บในเครื่องนี้', '<button class="btn sec" data-act="importXlsx">' + ic('upload') + 'นำเข้าจาก Excel</button><button class="btn" data-act="newProject">' + ic('plus') + 'โครงการใหม่</button>') + h;
-  if (!S.projects.length) return h + '<div class="card empty"><div style="font-size:40px"></div><p><b>ยังไม่มีโครงการ</b></p><p>เริ่มจากสร้างโครงการใหม่ นำเข้าจากไฟล์ Excel v4 ที่มีอยู่ หรือลองโครงการตัวอย่างเพื่อดูการทำงาน</p>' +
+  if (!S.projects.length) return h + '<div class="card empty"><div style="font-size:53px"></div><p><b>ยังไม่มีโครงการ</b></p><p>เริ่มจากสร้างโครงการใหม่ นำเข้าจากไฟล์ Excel v4 ที่มีอยู่ หรือลองโครงการตัวอย่างเพื่อดูการทำงาน</p>' +
     '<div class="row" style="justify-content:center"><button class="btn" data-act="newProject">' + ic('plus') + 'โครงการใหม่</button><button class="btn sec" data-act="samples">ลองโครงการตัวอย่าง 3 แบบ</button></div></div>' + installCard();
   var act = S.projects.filter(function (p) { return !p.archived; }), arc = S.projects.filter(function (p) { return p.archived; });
   var card = function (p) {
     var ts = allTasks.filter(function (t) { return t.projectId === p.id; }), s = projectSummary(p, ts), left = diffDays(s.end, today());
-    return '<div class="card pcard" data-go="/p/' + p.id + '" tabindex="0"><div class="between"><div class="grow"><div class="t" style="font-weight:700;font-size:16px">' + esc(p.name) + '</div>' +
+    return '<div class="card pcard" data-go="/p/' + p.id + '" tabindex="0"><div class="between"><div class="grow"><div class="t" style="font-weight:700;font-size:21px">' + esc(p.name) + '</div>' +
       '<div class="muted">' + (p.type === 'multi' ? 'หลายงานส่วน (' + (p.parts || []).length + ' งานส่วน)' : 'งานเดียว') + ' • ' + s.n + ' รายการ • ' + (left >= 0 ? 'เหลือ ' + left + ' วัน' : 'เลยกำหนด ' + (-left) + ' วัน') + '</div></div>' + badge(s.st) + '</div>' +
       '<div class="bar"><i style="width:' + Math.min(100, s.act * 100).toFixed(1) + '%"></i><b style="left:' + Math.min(100, s.plan * 100).toFixed(1) + '%"></b></div>' +
       '<div class="muted">ผลงานจริง <b>' + pct(s.act) + '</b> • แผน ' + pct(s.plan) + ' • สิ้นสุดสัญญา ' + th(s.end, true) + '</div></div>';
@@ -544,7 +550,7 @@ function groupStats(filterFn, d, hist) {
 }
 async function vDash() {
   var d = today(), pid = S.P.id;
-  if (!S.tasks.length) return '<div class="card empty"><div style="font-size:40px"></div><p><b>ยังไม่มีรายการงาน</b></p><p>เพิ่มรายการงานพร้อมวันเริ่ม-เสร็จตามแผน แล้วระบบจะคำนวณแผนงานและ S-Curve ให้</p>' +
+  if (!S.tasks.length) return '<div class="card empty"><div style="font-size:53px"></div><p><b>ยังไม่มีรายการงาน</b></p><p>เพิ่มรายการงานพร้อมวันเริ่ม-เสร็จตามแผน แล้วระบบจะคำนวณแผนงานและ S-Curve ให้</p>' +
     '<button class="btn" data-go="/p/' + pid + '/tasks">ไปที่แท็บผลงาน</button></div>';
   var pl = planAt(d), ac = actualNow(), rv = planAt(d, true), el = diffDays(d, projStart()) + 1, tot = projDur() + num(S.P.eot_days), rem = diffDays(projEnd(), d);
   var spi = pl ? ac / pl : 0, vd = Math.round((ac - pl) * projDur());
@@ -1109,7 +1115,7 @@ async function matDetail(sid) {
       '<p class="muted">เลือกผลทีละข้อหลังเปิดดูเอกสารแนบ • ข้อที่ไม่ใช่วัสดุนี้ (เช่น วัสดุอื่นในหมวดเดียวกัน หรือขั้นตอนทำงานหน้างาน) เลือก "ไม่เกี่ยวข้อง"</p><div class="tw"><table><tr><th>ข้อ</th><th>ข้อกำหนด</th><th style="width:150px">ผล</th></tr>' +
       cr.map(function (x) { var c = ch[x.key] || {};
         return '<tr><td>' + esc(x.cl) + '</td><td>' + esc(x.req) + '<div class="muted">' + esc(x.mat) + (x.kind ? ' • ' + esc(x.kind) : '') + (x.pg ? ' • หน้า ' + esc(x.pg) : '') + '</div>' +
-          '<input class="i" data-cnote="' + esc(x.key) + '" placeholder="สิ่งที่พบ / หมายเหตุ" value="' + esc(c.note) + '" style="margin-top:4px;padding:5px 8px;font-size:13px"></td>' +
+          '<input class="i" data-cnote="' + esc(x.key) + '" placeholder="สิ่งที่พบ / หมายเหตุ" value="' + esc(c.note) + '" style="margin-top:4px;padding:5px 8px;font-size:17px"></td>' +
           '<td><select class="i v-' + esc(c.v || '') + '" data-chk="' + esc(x.key) + '" aria-label="ผลข้อ ' + esc(x.cl) + '">' + opts(VERD, c.v, '- ยังไม่ตรวจ -') + '</select></td></tr>'; }).join('') + '</table></div>') + '</div>';
   h += '<div class="card"><h2>ผลพิจารณา</h2>' + (cs.sug ? '<p>ผลตามการตรวจ: ' + badge({ k: cs.sug === 'อนุมัติ' ? 'ok' : cs.sug === 'ไม่อนุมัติ' ? 'bad' : 'warn', t: 'แนะนำ: ' + cs.sug }) +
     (cs.c.none ? ' <span class="muted">(ยังไม่ตรวจ ' + cs.c.none + ' ข้อ)</span>' : '') + '</p>' : '') +
@@ -1145,12 +1151,18 @@ async function vApp() {
   var standalone = window.matchMedia && matchMedia('(display-mode: standalone)').matches;
   var ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
   var ai = await aiCfg(), used = num((ai.used || {})[iso(today())]);
-  var aiHtml = '<div class="card"><h2>AI ตรวจสเปกวัสดุ (Claude API)</h2>' +
+  var gem = ai.provider !== 'claude', mask = function (k) { return k ? '••••••••' + k.slice(-6) : ''; };
+  var aiHtml = '<div class="card"><h2>AI ตรวจสเปกวัสดุ</h2>' +
     (aiSandboxed() ? '<div class="banner warn">' + ic('alert') + '<span class="grow">หน้าทดลองนี้ไม่อนุญาตให้เชื่อมต่อภายนอก – AI ใช้ได้เมื่อเปิดแอปจาก GitHub Pages</span></div>' : '') +
-    '<p class="muted">แอปส่งเอกสารแนบของรายการขออนุมัติไปให้ Claude ตรวจเทียบข้อกำหนดโดยตรงจากเครื่องนี้ • API key เก็บเฉพาะในเครื่องนี้ ไม่รวมอยู่ในไฟล์สำรอง • มีค่าใช้จ่ายตามการใช้งาน (ดูที่ console.anthropic.com)</p>' +
-    '<div class="grid3">' + inp('aiKey', 'API key (sk-ant-…)', ai.key ? '••••••••' + ai.key.slice(-6) : '', 'password', 'autocomplete="off"') + inp('aiModel', 'โมเดล', ai.model || AI_DEFAULT_MODEL) + inp('aiLimit', 'จำกัดจำนวนครั้งต่อวัน', ai.limit, 'number', 'min="1"') + '</div>' +
-    '<p class="muted">ใช้วันนี้ ' + used + ' / ' + ai.limit + ' ครั้ง • สถานะ: ' + (ai.key ? '<span class="ok-t">ตั้งค่าแล้ว</span>' : 'ยังไม่ได้ตั้งค่า') + '</p>' +
-    '<div class="row"><button class="btn" data-act="aiSave">บันทึก</button><button class="btn sec" data-act="aiTest" ' + (ai.key ? '' : 'disabled') + '>ทดสอบการเชื่อมต่อ</button>' + (ai.key ? '<button class="btn ghost bad-t" data-act="aiClear">ลบ API key</button>' : '') + '</div></div>';
+    '<label class="f">ผู้ให้บริการ AI</label><div class="seg" id="aiProv"><button data-prov="gemini" class="' + (gem ? 'on' : '') + '">Google Gemini (ฟรี)</button><button data-prov="claude" class="' + (gem ? '' : 'on') + '">Claude (เสียค่าใช้จ่าย)</button></div>' +
+    '<div id="aiGem" class="' + (gem ? '' : 'hidden') + '"><p class="muted" style="margin-top:10px"><b>วิธีรับคีย์ฟรี:</b> เข้า <b>aistudio.google.com</b> ด้วยบัญชี Google → <b>Get API key</b> → <b>Create API key</b> → คัดลอกคีย์ (ขึ้นต้น AIza…) มาวางด้านล่าง • ไม่ต้องใช้บัตรเครดิต</p>' +
+    '<div class="banner warn">' + ic('alert') + '<span class="grow">แบบฟรี: Google อาจนำข้อมูลที่ส่งตรวจไปใช้ปรับปรุงบริการ และจำกัดจำนวนครั้งต่อนาที/ต่อวัน – อย่าส่งเอกสารลับของทางราชการ</span></div>' +
+    '<div class="grid2">' + inp('aiGKey', 'Gemini API key (AIza…)', mask(ai.gkey), 'password', 'autocomplete="off"') + inp('aiGModel', 'โมเดล (เว้นว่าง = เลือกอัตโนมัติ)', ai.gmodel) + '</div></div>' +
+    '<div id="aiCla" class="' + (gem ? 'hidden' : '') + '"><p class="muted" style="margin-top:10px">console.anthropic.com → เติมเครดิต → API Keys • มีค่าใช้จ่ายตามการใช้งาน</p>' +
+    '<div class="grid2">' + inp('aiKey', 'Claude API key (sk-ant-…)', mask(ai.key), 'password', 'autocomplete="off"') + inp('aiModel', 'โมเดล', ai.model || AI_DEFAULT_MODEL) + '</div></div>' +
+    '<div class="grid2">' + inp('aiLimit', 'จำกัดจำนวนครั้งต่อวัน (ครั้งที่ผิดพลาดนับด้วย)', ai.limit, 'number', 'min="1"') + '</div>' +
+    '<p class="muted">ใช้วันนี้ ' + used + ' / ' + ai.limit + ' ครั้ง • สถานะ: ' + (aiReady(ai) ? '<span class="ok-t">พร้อมใช้ – ' + esc(aiName(ai)) + '</span>' : 'ยังไม่ได้ตั้งค่า') + ' • คีย์เก็บเฉพาะในเครื่องนี้ ไม่อยู่ในไฟล์สำรองหรือการซิงก์</p>' +
+    '<div class="row"><button class="btn" data-act="aiSave">บันทึก</button><button class="btn sec" data-act="aiTest" ' + (aiReady(ai) ? '' : 'disabled') + '>ทดสอบการเชื่อมต่อ</button>' + (ai.key || ai.gkey ? '<button class="btn ghost bad-t" data-act="aiClear">ลบ API key</button>' : '') + '</div></div>';
   return pageHead('ตั้งค่าและสำรองข้อมูล', 'การแสดงผล การสำรอง/กู้คืน AI และการติดตั้งแอป', '') + '<div class="card"><h2>การแสดงผล</h2><div class="seg" id="themeSeg">' + [['auto', 'ตามเครื่อง'], ['light', 'สว่าง'], ['dark', 'มืด']].map(function (x) {
       return '<button data-theme="' + x[0] + '" class="' + (theme === x[0] ? 'on' : '') + '">' + x[1] + '</button>'; }).join('') + '</div></div>' +
     '<div class="card"><h2>สำรองและกู้คืนข้อมูล</h2><p>ข้อมูลทั้งหมดเก็บในเครื่องนี้เท่านั้น (ไม่ได้ส่งขึ้นอินเทอร์เน็ต) ถ้าล้างข้อมูลเบราว์เซอร์ เปลี่ยนเครื่อง หรือเครื่องเสีย ข้อมูลจะหาย – <b>ควรสำรองสัปดาห์ละครั้ง</b> แล้วเก็บไฟล์ไว้ใน Google Drive/OneDrive</p>' +
@@ -1158,7 +1170,7 @@ async function vApp() {
     '<div class="row"><button class="btn acc" data-act="backup">สำรองข้อมูลทั้งหมด (รวมรูป)</button><button class="btn sec" data-act="backupLite">สำรองแบบไม่รวมรูป</button>' +
     '<label class="btn sec" style="display:inline-block">กู้คืนจากไฟล์<input type="file" class="hidden" id="restoreFile" accept=".json,application/json"></label></div>' +
     '<p class="muted">ย้ายไปเครื่องใหม่: สำรองในเครื่องเดิม → เปิดแอปในเครื่องใหม่ → กู้คืนจากไฟล์</p></div>' +
-    aiHtml + '<div class="card"><h2>พื้นที่จัดเก็บ</h2><p>' + (est ? 'ใช้ไป ' + (est.usage / 1048576).toFixed(1) + ' MB จากที่ใช้ได้ประมาณ ' + (est.quota / 1073741824).toFixed(1) + ' GB' : 'ไม่ทราบขนาด') + '</p>' +
+    (await syncCard()) + aiHtml + '<div class="card"><h2>พื้นที่จัดเก็บ</h2><p>' + (est ? 'ใช้ไป ' + (est.usage / 1048576).toFixed(1) + ' MB จากที่ใช้ได้ประมาณ ' + (est.quota / 1073741824).toFixed(1) + ' GB' : 'ไม่ทราบขนาด') + '</p>' +
     '<p class="muted">การป้องกันการลบอัตโนมัติ: ' + (persisted ? '<span class="ok-t">✓ เปิดแล้ว</span>' : 'ยังไม่เปิด <button class="btn sm sec" data-act="persist">ขอเปิด</button>') + ' – ช่วยไม่ให้เบราว์เซอร์ลบข้อมูลเองเมื่อพื้นที่เครื่องเหลือน้อย</p></div>' +
     '<div class="card"><h2>ติดตั้งเป็นแอป</h2>' + (standalone ? '<p class="ok-t">✓ กำลังใช้งานแบบแอปที่ติดตั้งแล้ว</p>' :
       '<button class="btn" data-act="install">' + ic('download') + 'ติดตั้งลงเครื่องนี้</button>' +
@@ -1185,7 +1197,7 @@ async function doBackup(withFiles) {
     var rows = await DB.all(s);
     if (s === 'files') {
       var arr = [];
-      for (var j = 0; j < rows.length; j++) { var f = Object.assign({}, rows[j]); var b = f.blob; delete f.blob; if (withFiles) f.data = await b64FromBlob(b); arr.push(f); }
+      for (var j = 0; j < rows.length; j++) { var f = Object.assign({}, rows[j]); var b = f.blob; delete f.blob; if (withFiles && !b && f.driveId) { try { b = (await ensureBlob(rows[j])); } catch (e) {} } if (withFiles && b) f.data = await b64FromBlob(b); arr.push(f); }
       rows = arr;
     }
     out.stores[s] = rows;
@@ -1238,7 +1250,9 @@ function exportXlsx() {
       S.submittals.map(function (s) { var r = subRisk(s), cs = checkSummary(s); return [s.doc_no, s.material, s.brand, s.spec_sec ? specName(s.spec_sec) : 'กำหนดเอง', wbsOf(s.taskId), dt(s.submitted_date), r.need || '', s.status, dt(s.approved_date), cs.done + '/' + cs.n, r.t]; })),
       [10, 26, 16, 30, 10, 11, 12, 16, 11, 10, 26]);
     var ab = XLSX.write(wb, { bookType: 'xlsx', type: 'array', cellDates: true });
-    if (await saveBlob(p.name.replace(/[\\\/:*?"<>|]/g, '_').slice(0, 60) + '_' + iso(d) + '.xlsx', new Blob([ab], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }))) toast('ส่งออก Excel แล้ว');
+    await loadJSZip(); var zz = await JSZip.loadAsync(ab); await applyThaiFont(zz, 16 / 12, 0);
+    var blob = await zz.generateAsync({ type: 'blob', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', compression: 'DEFLATE' });
+    if (await saveBlob(p.name.replace(/[\\\/:*?"<>|]/g, '_').slice(0, 60) + '_' + iso(d) + '.xlsx', blob)) toast('ส่งออก Excel แล้ว');
   });
 }
 
@@ -1284,6 +1298,8 @@ async function doInstall() {
 }
 /* ---------------- EVENTS ---------------- */
 document.addEventListener('click', async function (e) {
+  var pv = e.target.closest('[data-prov]');
+  if (pv) { $$('#aiProv button').forEach(function (b) { b.classList.toggle('on', b === pv); }); $('#aiGem').classList.toggle('hidden', pv.dataset.prov !== 'gemini'); $('#aiCla').classList.toggle('hidden', pv.dataset.prov !== 'claude'); return; }
   var el = e.target.closest('[data-go],[data-act],[data-prog],[data-task],[data-tf],[data-tp],[data-open],[data-fdel],[data-sub],[data-addrow],[data-ldel],[data-fill],[data-wph],[data-chkall],[data-theme],[data-inst],[data-vo],[data-eot]');
   if (!el) return;
   try {
@@ -1329,7 +1345,7 @@ document.addEventListener('click', async function (e) {
     else if (a === 'backupLite') await doBackup(false);
     else if (a === 'persist') { var ok = navigator.storage && navigator.storage.persist ? await navigator.storage.persist() : false; toast(ok ? 'เปิดการป้องกันแล้ว' : 'เบราว์เซอร์ไม่อนุญาต – ติดตั้งเป็นแอปจะช่วยได้', !ok); render(); }
     else if (a === 'install') { await doInstall(); }
-    else if (a === 'wipe') { if (await confirmBox('ลบข้อมูลทุกโครงการในเครื่องนี้? (กู้คืนได้จากไฟล์สำรองเท่านั้น)', 'ลบทั้งหมด')) { for (var q = 0; q < STORES.length; q++) await DB.clear(STORES[q]); S.P = null; toast('ล้างข้อมูลแล้ว'); go('/'); } }
+    else if (a === 'wipe') { if (await confirmBox('ลบข้อมูลทุกโครงการในเครื่องนี้? (ถ้าเปิดซิงก์ไว้ ข้อมูลบนคลาวด์ยังอยู่และจะถูกดึงกลับเมื่อซิงก์ครั้งถัดไป)', 'ลบทั้งหมด')) { for (var q = 0; q < STORES.length; q++) if (STORES[q] !== 'meta') await DB.clear(STORES[q]); await syncResetLocal(); S.P = null; toast('ล้างข้อมูลในเครื่องแล้ว'); go('/'); } }
     else if (a === 'pasteTasks') pasteTasks();
     else if (a === 'saveProj') { var box = $('#projFormBox'); readProjectForm(box, S.P); await saveProject(); toast('บันทึกแล้ว'); render(); }
     else if (a === 'archive') { S.P.archived = !S.P.archived; await saveProject(); toast(S.P.archived ? 'เก็บเข้าคลังแล้ว' : 'นำออกจากคลังแล้ว'); render(); }
@@ -1344,14 +1360,29 @@ document.addEventListener('click', async function (e) {
     else if (a === 'exportXlsx') await exportXlsx();
     else if (a === 'exportV4') { el.disabled = true; var old = el.innerHTML; el.innerHTML = '<span class="spin"></span> กำลังสร้างไฟล์…'; try { await exportV4(); } finally { el.disabled = false; el.innerHTML = old; } }
     else if (a === 'finSet') openFinSet();
+    else if (a === 'syncNow') { await syncNow(true); render(); }
+    else if (a === 'syncOn') {
+      el.disabled = true; el.innerHTML = '<span class="spin"></span> กำลังเชื่อมต่อ…';
+      try { var inf = await syncConnect($('#syUrl').value, $('#syKey').value); toast('เชื่อมต่อแล้ว (บนคลาวด์มี ' + inf.records + ' รายการ) – กำลังซิงก์…', false, 4000); await syncNow(false); toast(SYNC.state === 'ok' ? 'ซิงก์ครั้งแรกเสร็จแล้ว' : SYNC.msg, SYNC.state !== 'ok'); render(); }
+      catch (er) { el.disabled = false; el.textContent = 'เชื่อมต่อและซิงก์'; throw er; }
+    }
+    else if (a === 'syncOff') { if (await confirmBox('ยกเลิกการซิงก์ในเครื่องนี้? ข้อมูลในเครื่องและบนคลาวด์ยังอยู่ครบ (รายการที่ยังไม่ได้ส่งจะไม่ถูกส่ง)', 'ยกเลิกการเชื่อมต่อ')) { await meta('sync', null); await syncResetLocal(); syncBadge(); render(); } }
     else if (a === 'printDash') go('/p/' + S.P.id + '/print/dash/0');
-    else if (a === 'aiSave') { var cfg = await aiCfg(), k = $('#aiKey').value.trim(); if (k && k.indexOf('••') !== 0) { if (!/^sk-ant-/.test(k)) throw new Error('API key ต้องขึ้นต้นด้วย sk-ant-'); cfg.key = k; }
-      cfg.model = $('#aiModel').value.trim() || AI_DEFAULT_MODEL; cfg.limit = Math.max(1, Math.round(num($('#aiLimit').value) || 30)); await meta('ai', cfg); toast('บันทึกการตั้งค่า AI แล้ว'); render(); }
-    else if (a === 'aiTest') { var c2 = await aiCfg(); if (aiSandboxed()) throw new Error('หน้าทดลองนี้ไม่อนุญาตให้เชื่อมต่อภายนอก'); el.disabled = true; try { toast(await aiTest(c2.key, c2.model), false, 4000); } finally { el.disabled = false; } }
-    else if (a === 'aiClear') { if (await confirmBox('ลบ API key ออกจากเครื่องนี้?', 'ลบ')) { var c3 = await aiCfg(); c3.key = ''; await meta('ai', c3); render(); } }
+    else if (a === 'aiSave') {
+      var cfg = await aiCfg(), prov = ($('#aiProv button.on') || {}).dataset ? $('#aiProv button.on').dataset.prov : 'gemini', gk = $('#aiGKey').value.trim(), ck = $('#aiKey').value.trim();
+      cfg.provider = prov;
+      if (gk && gk.indexOf('••') !== 0) { if (!/^AIza[\w-]{20,}$/.test(gk)) throw new Error('Gemini API key ต้องขึ้นต้นด้วย AIza'); cfg.gkey = gk; cfg.gmodel = ''; }
+      if (ck && ck.indexOf('••') !== 0) { if (!/^sk-ant-/.test(ck)) throw new Error('Claude API key ต้องขึ้นต้นด้วย sk-ant-'); cfg.key = ck; }
+      var gm = $('#aiGModel').value.trim(); if (gm !== (cfg.gmodel || '')) cfg.gmodel = gm;
+      cfg.model = $('#aiModel').value.trim() || AI_DEFAULT_MODEL; cfg.limit = Math.max(1, Math.round(num($('#aiLimit').value) || 30));
+      await meta('ai', cfg); toast('บันทึกการตั้งค่า AI แล้ว'); render();
+    }
+    else if (a === 'aiTest') { var c2 = await aiCfg(); if (aiSandboxed()) throw new Error('หน้าทดลองนี้ไม่อนุญาตให้เชื่อมต่อภายนอก'); el.disabled = true; try { toast(await aiTest(c2), false, 4500); render(); } finally { el.disabled = false; } }
+    else if (a === 'aiClear') { if (await confirmBox('ลบ API key ทั้งหมดออกจากเครื่องนี้?', 'ลบ')) { var c3 = await aiCfg(); c3.key = ''; c3.gkey = ''; c3.gmodel = ''; await meta('ai', c3); render(); } }
     else if (a === 'aiRun') {
       var sa = S.submittals.filter(function (x) { return x.id === S.route[3]; })[0];
-      if (!(await confirmBox('ส่งเอกสารแนบ ' + filesOf('submittal', sa.id).length + ' ไฟล์ให้ AI ตรวจเทียบข้อกำหนด? (มีค่าใช้จ่าย API ประมาณ 20–60 วินาที)', 'ตรวจด้วย AI'))) return;
+      var cfA = await aiCfg();
+      if (!(await confirmBox('ส่งเอกสารแนบ ' + filesOf('submittal', sa.id).length + ' ไฟล์ให้ ' + aiName(cfA) + ' ตรวจเทียบข้อกำหนด? (ประมาณ 20–60 วินาที' + (cfA.provider === 'claude' ? ' มีค่าใช้จ่าย API' : ' ใช้โควตาฟรี') + ')', 'ตรวจด้วย AI'))) return;
       el.disabled = true; el.innerHTML = '<span class="spin"></span> AI กำลังตรวจ…';
       try { await aiCheck(sa); toast('AI ตรวจเสร็จแล้ว'); render(); } catch (er) { el.disabled = false; el.innerHTML = ic('spark') + 'ตรวจด้วย AI'; throw er; }
     }
@@ -1370,7 +1401,7 @@ document.addEventListener('click', async function (e) {
       toast('ลบแล้ว'); go('/p/' + S.P.id + '/daily'); }
     else if (a === 'printDaily') { if (S.dailyDraft) await saveDaily(); go('/p/' + S.P.id + '/print/daily/' + el.dataset.date); }
     else if (a === 'printWeekly') { await saveWeekly(); go('/p/' + S.P.id + '/print/weekly/' + el.dataset.week); }
-    else if (a === 'print') { hydrateImgs(); await Promise.all($$('.doc img').map(function (im) { return im.complete ? 0 : new Promise(function (r) { im.onload = im.onerror = r; }); })); setTimeout(function () { window.print(); }, 150); }
+    else if (a === 'print') { toast('กำลังเตรียมเอกสาร…'); await hydrateImgs(); await Promise.all($$('.doc img').map(function (im) { return im.complete && im.src ? 0 : new Promise(function (r) { im.onload = im.onerror = r; setTimeout(r, 8000); }); })); setTimeout(function () { window.print(); }, 200); }
     else if (a === 'subDecide' || a === 'subSuggest') {
       var sb = S.submittals.filter(function (x) { return x.id === S.route[3]; })[0];
       if (a === 'subSuggest') { $('#dSt').value = el.dataset.sug; if (el.dataset.sug === 'อนุมัติ' && !$('#dAp').value) $('#dAp').value = iso(today()); return; }
@@ -1413,6 +1444,7 @@ window.addEventListener('hashchange', function () {
   Promise.all(pend).then(function () { S.dailyDraft = null; S.weekDraft = null; render(); window.scrollTo(0, 0); });
 });
 $('#brand').addEventListener('click', function () { go('/'); });
+$('#syncBtn').addEventListener('click', function () { syncNow(true); });
 $('#installBtn').addEventListener('click', function () { doInstall().catch(function (e) { toast(e.message, true); }); });
 if (!isStandalone()) $('#installBtn').classList.remove('hidden');
 $('#menuBtn').addEventListener('click', function () {
@@ -1466,7 +1498,7 @@ async function createSample(kind) {
     var sky = g.createLinearGradient(0, 0, 0, 500); sky.addColorStop(0, '#8fb8e8'); sky.addColorStop(1, '#dbe8f5'); g.fillStyle = sky; g.fillRect(0, 0, 1200, 520);
     g.fillStyle = kind ? '#9a8a70' : '#8a6d4b'; g.fillRect(0, 520, 1200, 380); g.fillStyle = '#b9b9b9';
     if (kind) { g.fillRect(100, 600, 1000, 90); } else { for (var i = 0; i < 6; i++) g.fillRect(170 + i * 160, 380, 40, 230); g.fillStyle = '#e0a020'; g.fillRect(840, 120, 30, 420); g.fillRect(760, 120, 240, 26); }
-    g.fillStyle = 'rgba(0,0,0,.55)'; g.fillRect(0, 800, 1200, 100); g.fillStyle = '#fff'; g.font = 'bold 40px Tahoma, sans-serif'; g.fillText('ภาพตัวอย่าง: ' + title, 30, 865);
+    g.fillStyle = 'rgba(0,0,0,.55)'; g.fillRect(0, 800, 1200, 100); g.fillStyle = '#fff'; g.font = 'bold 54px THSarabunPSK, Tahoma, sans-serif'; g.fillText('ภาพตัวอย่าง: ' + title, 30, 865);
     return new Promise(function (res) { c.toBlob(function (b) { res(b); }, 'image/jpeg', 0.8); });
   };
   var daily = [], files = [];
@@ -1526,7 +1558,10 @@ function registerSW() {
   try { if (navigator.storage && navigator.storage.persist) navigator.storage.persisted().then(function (p) { if (!p) navigator.storage.persist(); }); } catch (e) {}
   registerSW();
   var tries = 0; while (!window.Chart && tries++ < 20) await new Promise(function (r) { setTimeout(r, 50); });
-  render();
+  if (window.Chart) { Chart.defaults.font.family = "'THSarabunPSK','TH SarabunPSK','TH Sarabun PSK',sans-serif"; Chart.defaults.font.size = 16; }
+  try { if (document.fonts && document.fonts.load) await Promise.race([document.fonts.load("20px THSarabunPSK"), new Promise(function (r) { setTimeout(r, 1500); })]); } catch (e) {}
+  await render();
+  syncBadge(); outboxAll().then(function (a) { SYNC.pending = a.length; syncBadge(); }).catch(function () {}); scheduleSync(1200);
 })();
 
 /* ---------------- CONTRACT & FINANCE ---------------- */
@@ -1697,11 +1732,33 @@ function docPay(id) {
     (pay.K != null ? row('ค่า K = ' + pay.K.toFixed(4) + ' (คิดเฉพาะส่วนที่เกิน ±' + F.kThr + '%)', money(pay.kadj)) : '') +
     row('หัก เงินล่วงหน้า ' + F.adv + '%', '(' + money(pay.adv) + ')') + row('หัก เงินประกันผลงาน ' + F.ret + '%', '(' + money(pay.ret) + ')') + (pay.ld ? row('หัก ค่าปรับ', '(' + money(pay.ld) + ')') : '') +
     row('ยอดจ่ายสุทธิ (ก่อนภาษี)', money(pay.net), true) + '</table>' + (i.remark ? '<h3>หมายเหตุ</h3><div class="box">' + esc(i.remark) + '</div>' : '') +
-    '<p class="muted" style="font-size:12px">ยอดสุทธิยังไม่รวมภาษีมูลค่าเพิ่มและภาษีหัก ณ ที่จ่าย – ปรับตามเงื่อนไขสัญญาและระเบียบของหน่วยงาน</p>' +
+    '<p class="muted" style="font-size:16px">ยอดสุทธิยังไม่รวมภาษีมูลค่าเพิ่มและภาษีหัก ณ ที่จ่าย – ปรับตามเงื่อนไขสัญญาและระเบียบของหน่วยงาน</p>' +
     '<div class="sig"><div>ลงชื่อ ...........................<br>(...........................)<br>ผู้จัดทำ</div><div>ลงชื่อ ...........................<br>(' + esc(p.supervisor_name || '...........................') + ')<br>' + esc(p.supervisor_pos || 'ผู้ควบคุมงาน') + '</div>' +
     '<div>ลงชื่อ ...........................<br>(' + esc(p.chair || '...........................') + ')<br>ประธานกรรมการตรวจรับพัสดุ</div></div></div>';
 }
 
+/* ---------------- ฟอนต์ TH SarabunPSK ในไฟล์ Excel ---------------- */
+var XL_FONT = 'TH SarabunPSK';
+function scaleNum(v, k, min) { return String(Math.max(min || 0, Math.round(parseFloat(v) * k * 2) / 2)); }
+async function applyThaiFont(zip, k, rowK) {
+  var st = zip.file('xl/styles.xml');
+  if (st) zip.file('xl/styles.xml', (await st.async('string')).replace(/<name val="[^"]*"\s*\/>/g, '<name val="' + XL_FONT + '"/>')
+    .replace(/<sz val="([\d.]+)"\s*\/>/g, function (m, v) { return '<sz val="' + scaleNum(v, k, 12) + '"/>'; }).replace(/<family val="\d+"\s*\/>/g, ''));
+  var ss = zip.file('xl/sharedStrings.xml');
+  if (ss) zip.file('xl/sharedStrings.xml', (await ss.async('string')).replace(/<rFont val="[^"]*"\s*\/>/g, '<rFont val="' + XL_FONT + '"/>')
+    .replace(/<sz val="([\d.]+)"\s*\/>/g, function (m, v) { return '<sz val="' + scaleNum(v, k, 12) + '"/>'; }));
+  var names = Object.keys(zip.files);
+  for (var i = 0; i < names.length; i++) {
+    var n = names[i];
+    if (/^xl\/charts\/chart\d+\.xml$/.test(n)) {
+      zip.file(n, (await zip.file(n).async('string')).replace(/(<a:(?:latin|ea|cs) typeface=")[^"]*"/g, '$1' + XL_FONT + '"')
+        .replace(/(<a:defRPr[^>]*?\ssz=")(\d+)"/g, function (m, a, v) { return a + Math.round(v * k / 100) * 100 + '"'; })
+        .replace(/(<a:rPr[^>]*?\ssz=")(\d+)"/g, function (m, a, v) { return a + Math.round(v * k / 100) * 100 + '"'; }));
+    } else if (rowK && /^xl\/worksheets\/sheet\d+\.xml$/.test(n)) {
+      zip.file(n, (await zip.file(n).async('string')).replace(/(<row[^>]*?\sht=")([\d.]+)"/g, function (m, a, v) { return a + scaleNum(v, rowK) + '"'; }));
+    }
+  }
+}
 /* ---------------- ส่งออก Excel รูปแบบ v4 (เติมข้อมูลลงไฟล์แม่แบบ รักษาสูตร กราฟ และรูปแบบทั้งหมด) ---------------- */
 var TPL_PATH = { single: 'templates/template_single.xlsx', multi: 'templates/template_multi.xlsx' };
 var X_NS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main', R_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
@@ -1894,6 +1951,7 @@ async function exportV4() {
   if (!calc) { calc = wbDoc.createElementNS(X_NS, 'calcPr'); wbDoc.documentElement.appendChild(calc); }
   calc.setAttribute('fullCalcOnLoad', '1'); zip.file('xl/workbook.xml', new XMLSerializer().serializeToString(wbDoc));
   if (zip.file('xl/calcChain.xml')) zip.remove('xl/calcChain.xml');
+  await applyThaiFont(zip, 1.4, 1.25);
   var blob = await zip.generateAsync({ type: 'blob', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', compression: 'DEFLATE' });
   var fname = 'ควบคุมงาน_' + p.name.replace(/[\\\/:*?"<>|()]/g, '_').slice(0, 50) + '_' + iso(d) + '.xlsx';
   if (await saveBlob(fname, blob)) toast('ส่งออกไฟล์ Excel (รูปแบบ v4 ' + (multi ? 'หลายงานส่วน' : 'งานเดียว') + ') แล้ว', false, 4000);
@@ -1902,16 +1960,38 @@ async function exportV4() {
 /* ---------------- AI ตรวจสเปก (Claude API เรียกจากเครื่องโดยตรง) ---------------- */
 var AI_DEFAULT_MODEL = 'claude-sonnet-5';
 var AI_URL = 'https://api.anthropic.com/v1';
-async function aiCfg() { return Object.assign({ key: '', model: AI_DEFAULT_MODEL, limit: 30, used: {} }, (await meta('ai')) || {}); }
+var GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta';
+async function aiCfg() { return Object.assign({ provider: 'gemini', key: '', model: AI_DEFAULT_MODEL, gkey: '', gmodel: '', limit: 30, used: {} }, (await meta('ai')) || {}); }
+function aiReady(c) { return c.provider === 'claude' ? !!c.key : !!c.gkey; }
+function aiName(c) { return c.provider === 'claude' ? 'Claude (' + (c.model || AI_DEFAULT_MODEL) + ')' : 'Gemini (' + (c.gmodel || 'เลือกอัตโนมัติ') + ')'; }
 function aiSandboxed() { return /claudeusercontent|claude\.ai|claude\.site/.test(location.host) || location.protocol === 'file:'; }
 function aiHeaders(key) { return { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true', 'content-type': 'application/json' }; }
-async function aiTest(key, model) {
-  var r = await fetch(AI_URL + '/models?limit=1000', { headers: aiHeaders(key) }).catch(function () { throw new Error('เชื่อมต่อไม่ได้ – ตรวจอินเทอร์เน็ต'); });
+// เลือกรุ่น Gemini: รุ่น Flash ใหม่ที่สุดที่เป็นรุ่นเสถียร (ไม่ใช่ lite/preview/exp) ถ้าไม่มีจึงใช้รุ่นอื่น
+function pickGemini(ids) {
+  var ver = function (id) { var m = /gemini-(\d+(?:\.\d+)?)/.exec(id); return m ? parseFloat(m[1]) : 0; };
+  var score = function (id) { return ver(id) * 100 - (/lite/.test(id) ? 30 : 0) - (/preview|exp/.test(id) ? 10 : 0) - (/-\d{3,}$|latest/.test(id) ? 1 : 0); };
+  var c = ids.filter(function (id) { return /^gemini-[\d.]+-flash/.test(id) && !/image|tts|audio|live|thinking|embedding/.test(id); });
+  return c.sort(function (a, b) { return score(b) - score(a); })[0] || ids.filter(function (id) { return /flash/.test(id); })[0] || '';
+}
+async function geminiModels(key) {
+  var r = await fetch(GEMINI_URL + '/models?pageSize=200&key=' + encodeURIComponent(key)).catch(function () { throw new Error('เชื่อมต่อ Gemini ไม่ได้ – ตรวจอินเทอร์เน็ต'); });
+  if (r.status === 400 || r.status === 403) throw new Error('API key ของ Gemini ไม่ถูกต้อง');
+  if (!r.ok) throw new Error('เชื่อมต่อ Gemini ไม่ได้ (' + r.status + ')');
+  return ((await r.json()).models || []).filter(function (m) { return (m.supportedGenerationMethods || []).indexOf('generateContent') >= 0; })
+    .map(function (m) { return String(m.name).replace(/^models\//, ''); });
+}
+async function aiTest(c) {
+  if (c.provider !== 'claude') {
+    var ids = await geminiModels(c.gkey), m = c.gmodel && ids.indexOf(c.gmodel) >= 0 ? c.gmodel : pickGemini(ids);
+    if (!m) throw new Error('คีย์ใช้ได้ แต่ไม่พบโมเดล Gemini Flash ในบัญชีนี้');
+    c.gmodel = m; await meta('ai', c); return 'เชื่อมต่อ Gemini สำเร็จ • ใช้โมเดล ' + m;
+  }
+  var r = await fetch(AI_URL + '/models?limit=1000', { headers: aiHeaders(c.key) }).catch(function () { throw new Error('เชื่อมต่อไม่ได้ – ตรวจอินเทอร์เน็ต'); });
   if (r.status === 401) throw new Error('API key ไม่ถูกต้องหรือถูกยกเลิก');
   if (!r.ok) throw new Error('เชื่อมต่อไม่ได้ (' + r.status + ')');
-  var ids = ((await r.json()).data || []).map(function (m) { return m.id; });
-  if (ids.length && ids.indexOf(model) < 0) throw new Error('คีย์ใช้ได้ แต่ไม่พบโมเดล ' + model + ' – ใช้ได้: ' + ids.slice(0, 5).join(', '));
-  return 'เชื่อมต่อสำเร็จ • โมเดล ' + model;
+  var ids2 = ((await r.json()).data || []).map(function (x) { return x.id; });
+  if (ids2.length && ids2.indexOf(c.model) < 0) throw new Error('คีย์ใช้ได้ แต่ไม่พบโมเดล ' + c.model + ' – ใช้ได้: ' + ids2.slice(0, 5).join(', '));
+  return 'เชื่อมต่อ Claude สำเร็จ • โมเดล ' + c.model;
 }
 var AI_SYSTEM = [
   'คุณคือผู้ตรวจสอบวัสดุก่อสร้างของผู้ควบคุมงานในโครงการภาครัฐของไทย',
@@ -1930,34 +2010,51 @@ function parseAiJson(text) {
   try { return JSON.parse(t.slice(a, b + 1)); } catch (e) { throw new Error('AI ตอบกลับในรูปแบบที่อ่านไม่ได้ กรุณาลองใหม่'); }
 }
 async function aiCheck(s) {
-  var cfg = await aiCfg(), day = iso(today()), used = num(cfg.used[day]);
+  var cfg = await aiCfg(), day = iso(today()), used = num(cfg.used[day]), gem = cfg.provider !== 'claude';
   if (aiSandboxed()) throw new Error('AI ใช้ได้เมื่อเปิดแอปจาก GitHub Pages (หน้าทดลองใน claude.ai ไม่อนุญาตให้เชื่อมต่อภายนอก)');
-  if (!cfg.key) throw new Error('ยังไม่ได้ใส่ API key – ไปที่ ตั้งค่าแอป → AI ตรวจสเปก');
-  if (used >= num(cfg.limit)) throw new Error('ใช้ AI ครบโควตาวันนี้แล้ว (' + cfg.limit + ' ครั้ง) – ปรับได้ที่ตั้งค่าแอป');
+  if (!aiReady(cfg)) throw new Error('ยังไม่ได้ใส่ API key – ไปที่ ตั้งค่าแอป → AI ตรวจสเปก');
+  if (used >= num(cfg.limit)) throw new Error('ใช้ AI ครบจำนวนที่ตั้งไว้ของวันนี้แล้ว (' + cfg.limit + ' ครั้ง) – ปรับได้ที่ตั้งค่าแอป');
   var crit = criteriaOf(s).slice(0, 60);
   if (!crit.length) throw new Error('กำหนดเกณฑ์ตรวจก่อน (เลือกหมวดหรือพิมพ์ข้อกำหนด)');
   var files = filesOf('submittal', s.id).slice(0, 8);
   if (!files.length) throw new Error('แนบเอกสารสเปกหรือรูปวัสดุก่อน');
-  var total = files.reduce(function (a, f) { return a + (f.size || f.blob.size); }, 0);
-  if (total > 24 * 1024 * 1024) throw new Error('ไฟล์แนบรวมใหญ่เกิน 24 MB – ลดจำนวนไฟล์หรือแยกเฉพาะหน้าที่เกี่ยวข้อง');
-  var content = [];
-  for (var i = 0; i < files.length; i++) {
-    var f = files[i], src = { type: 'base64', media_type: f.mime, data: await b64FromBlob(f.blob) };
-    content.push({ type: 'text', text: 'ไฟล์ ' + (i + 1) + ': ' + f.name + (f.caption ? ' (' + f.caption + ')' : '') });
-    content.push(f.mime === 'application/pdf' ? { type: 'document', source: src } : { type: 'image', source: src });
-  }
-  content.push({ type: 'text', text: ['วัสดุที่เสนอ: ' + (s.material || '-') + ' | ยี่ห้อ/รุ่น: ' + (s.brand || '-') + ' | หมวด: ' + (s.spec_sec ? specName(s.spec_sec) : 'ข้อกำหนดเฉพาะ'),
+  for (var q = 0; q < files.length; q++) if (!files[q].blob && typeof ensureBlob === 'function') await ensureBlob(files[q]);
+  var total = files.reduce(function (a, f) { return a + (f.size || (f.blob ? f.blob.size : 0)); }, 0), cap = gem ? 15 : 24;
+  if (total > cap * 1024 * 1024) throw new Error('ไฟล์แนบรวมใหญ่เกิน ' + cap + ' MB – ลดจำนวนไฟล์หรือแยกเฉพาะหน้าที่เกี่ยวข้อง');
+  var intro = [], datas = [];
+  for (var i = 0; i < files.length; i++) { intro.push('ไฟล์ ' + (i + 1) + ': ' + files[i].name + (files[i].caption ? ' (' + files[i].caption + ')' : '')); datas.push({ mime: files[i].mime, data: await b64FromBlob(files[i].blob) }); }
+  var ask = ['วัสดุที่เสนอ: ' + (s.material || '-') + ' | ยี่ห้อ/รุ่น: ' + (s.brand || '-') + ' | หมวด: ' + (s.spec_sec ? specName(s.spec_sec) : 'ข้อกำหนดเฉพาะ'),
     'ข้อกำหนดที่ต้องตรวจ (JSON): ' + JSON.stringify(crit.map(function (c) { return { cl: c.cl, mat: c.mat, kind: c.kind, req: c.req }; })),
-    'ตอบเป็น JSON รูปแบบ: {"items":[{"cl":"ข้อ","mat":"วัสดุ","found":"สิ่งที่พบ","verdict":"ผ่าน|ไม่ผ่าน|ไม่พบข้อมูล|ไม่เกี่ยวข้อง"}],"summary":"สรุป 2-4 ประโยค ระบุเอกสารที่ต้องขอเพิ่ม (ถ้ามี)"} โดยมี items ครบทุกข้อตามลำดับ'].join('\n') });
+    'ตอบเป็น JSON รูปแบบ: {"items":[{"cl":"ข้อ","mat":"วัสดุ","found":"สิ่งที่พบ","verdict":"ผ่าน|ไม่ผ่าน|ไม่พบข้อมูล|ไม่เกี่ยวข้อง"}],"summary":"สรุป 2-4 ประโยค ระบุเอกสารที่ต้องขอเพิ่ม (ถ้ามี)"} โดยมี items ครบทุกข้อตามลำดับ'].join('\n');
+  if (gem && !cfg.gmodel) { try { await aiTest(cfg); } catch (e) { throw e; } }
   cfg.used = {}; cfg.used[day] = used + 1; await meta('ai', cfg);
-  var ctl = new AbortController(), timer = setTimeout(function () { ctl.abort(); }, 180000), res;
-  try {
-    res = await fetch(AI_URL + '/messages', { method: 'POST', headers: aiHeaders(cfg.key), signal: ctl.signal,
-      body: JSON.stringify({ model: cfg.model || AI_DEFAULT_MODEL, max_tokens: 4000, system: AI_SYSTEM, messages: [{ role: 'user', content: content }] }) });
-  } catch (e) { throw new Error(e.name === 'AbortError' ? 'AI ใช้เวลานานเกินไป ลองลดจำนวนไฟล์แล้วตรวจใหม่' : 'เชื่อมต่อ AI ไม่ได้ – ตรวจอินเทอร์เน็ต'); } finally { clearTimeout(timer); }
+  var ctl = new AbortController(), timer = setTimeout(function () { ctl.abort(); }, 180000), res, url, body, headers, model = gem ? cfg.gmodel : (cfg.model || AI_DEFAULT_MODEL);
+  if (gem) {
+    var parts = []; datas.forEach(function (d, i) { parts.push({ text: intro[i] }); parts.push({ inline_data: { mime_type: d.mime, data: d.data } }); }); parts.push({ text: ask });
+    url = GEMINI_URL + '/models/' + encodeURIComponent(model) + ':generateContent?key=' + encodeURIComponent(cfg.gkey); headers = { 'content-type': 'application/json' };
+    body = { systemInstruction: { parts: [{ text: AI_SYSTEM }] }, contents: [{ role: 'user', parts: parts }], generationConfig: { temperature: 0.1, responseMimeType: 'application/json', maxOutputTokens: 8192 } };
+  } else {
+    var content = []; datas.forEach(function (d, i) { var src = { type: 'base64', media_type: d.mime, data: d.data }; content.push({ type: 'text', text: intro[i] }); content.push(d.mime === 'application/pdf' ? { type: 'document', source: src } : { type: 'image', source: src }); });
+    content.push({ type: 'text', text: ask });
+    url = AI_URL + '/messages'; headers = aiHeaders(cfg.key); body = { model: model, max_tokens: 4000, system: AI_SYSTEM, messages: [{ role: 'user', content: content }] };
+  }
+  try { res = await fetch(url, { method: 'POST', headers: headers, signal: ctl.signal, body: JSON.stringify(body) }); }
+  catch (e) { throw new Error(e.name === 'AbortError' ? 'AI ใช้เวลานานเกินไป ลองลดจำนวนไฟล์แล้วตรวจใหม่' : 'เชื่อมต่อ AI ไม่ได้ – ตรวจอินเทอร์เน็ต'); } finally { clearTimeout(timer); }
   var txt = await res.text();
-  if (!res.ok) { var msg = txt; try { msg = JSON.parse(txt).error.message; } catch (e) {} throw new Error('AI ตอบกลับผิดพลาด (' + res.status + '): ' + String(msg).slice(0, 160)); }
-  var data = JSON.parse(txt), out = parseAiJson((data.content || []).filter(function (b) { return b.type === 'text'; }).map(function (b) { return b.text; }).join(''));
+  if (!res.ok) {
+    var msg = txt; try { var ej = JSON.parse(txt); msg = (ej.error && ej.error.message) || msg; } catch (e) {}
+    if (res.status === 429) throw new Error(gem ? 'เกินโควตาฟรีของ Gemini (จำกัดต่อนาที/ต่อวัน) – รอสักครู่แล้วลองใหม่ หรือลองพรุ่งนี้' : 'AI ไม่ว่างหรือเกินโควตา (429) – ลองใหม่ภายหลัง');
+    throw new Error('AI ตอบกลับผิดพลาด (' + res.status + '): ' + String(msg).slice(0, 160));
+  }
+  var data = JSON.parse(txt), text, usage = null;
+  if (gem) {
+    var cand = (data.candidates || [])[0];
+    if (!cand) throw new Error('Gemini ปฏิเสธการตรวจ' + (data.promptFeedback && data.promptFeedback.blockReason ? ' (' + data.promptFeedback.blockReason + ')' : '') + ' – ลองใหม่หรือเปลี่ยนไฟล์');
+    text = ((cand.content || {}).parts || []).map(function (p) { return p.text || ''; }).join('');
+    if (!text && cand.finishReason) throw new Error('Gemini ไม่ส่งผลตรวจ (' + cand.finishReason + ') – ลองลดจำนวนไฟล์แล้วตรวจใหม่');
+    usage = data.usageMetadata || null;
+  } else { text = (data.content || []).filter(function (b) { return b.type === 'text'; }).map(function (b) { return b.text; }).join(''); usage = data.usage || null; }
+  var out = parseAiJson(text);
   var V = ['ผ่าน', 'ไม่ผ่าน', 'ไม่พบข้อมูล', 'ไม่เกี่ยวข้อง'];
   var items = crit.map(function (c, i) {
     var m = (out.items || []).filter(function (x) { return String(x.cl) === String(c.cl) && (!x.mat || x.mat === c.mat); })[0] || (out.items || [])[i] || {};
@@ -1965,18 +2062,18 @@ async function aiCheck(s) {
   });
   var rel = items.filter(function (x) { return x.verdict !== 'ไม่เกี่ยวข้อง'; });
   var overall = !rel.length ? 'more_docs' : rel.some(function (x) { return x.verdict === 'ไม่ผ่าน'; }) ? 'rejected' : rel.some(function (x) { return x.verdict === 'ไม่พบข้อมูล'; }) ? 'more_docs' : 'approved';
-  s.ai = { items: items, summary: String(out.summary || '').slice(0, 1500), overall: overall, model: cfg.model || AI_DEFAULT_MODEL, at: new Date().toISOString(), files: files.length, usage: data.usage || null };
+  s.ai = { items: items, summary: String(out.summary || '').slice(0, 1500), overall: overall, model: (gem ? 'Gemini ' : 'Claude ') + model, at: new Date().toISOString(), files: files.length, usage: usage };
   s.updated = new Date().toISOString(); await DB.put('submittals', s);
   return s;
 }
 var AI_OVR = { approved: { k: 'ok', t: 'AI แนะนำ: อนุมัติได้' }, more_docs: { k: 'warn', t: 'AI แนะนำ: ขอเอกสารเพิ่มเติม' }, rejected: { k: 'bad', t: 'AI แนะนำ: ไม่อนุมัติ' } };
 function aiCard(s, cfg) {
-  var ai = s.ai, nF = filesOf('submittal', s.id).length, nC = criteriaOf(s).length, ready = cfg.key && !aiSandboxed();
+  var ai = s.ai, nF = filesOf('submittal', s.id).length, nC = criteriaOf(s).length, ready = aiReady(cfg) && !aiSandboxed();
   var h = '<div class="card"><div class="card-h"><h2>ตรวจเบื้องต้นด้วย AI</h2>' + (ready ? '<button class="btn acc" data-act="aiRun" ' + (nF && nC ? '' : 'disabled') + '>' + ic('spark') + (ai ? 'ตรวจใหม่' : 'ตรวจด้วย AI') + '</button>' : '') + '</div>';
   if (aiSandboxed()) h += '<p class="muted">AI ใช้ได้เมื่อเปิดแอปจาก GitHub Pages ที่ติดตั้งแล้ว (หน้าทดลองใน claude.ai ไม่อนุญาตให้เชื่อมต่อภายนอก)</p>';
-  else if (!cfg.key) h += '<p class="muted">ยังไม่ได้เปิดใช้ – ใส่ API key ของ Anthropic ที่ <a href="#/app">ตั้งค่าแอป</a></p>';
+  else if (!aiReady(cfg)) h += '<p class="muted">ยังไม่ได้เปิดใช้ – ใส่ API key ของ Gemini (ฟรี) หรือ Claude ที่ <a href="#/app">ตั้งค่าแอป</a></p>';
   else if (!nF || !nC) h += '<p class="muted">ต้องมีไฟล์แนบและเกณฑ์ที่ใช้ตรวจก่อน</p>';
-  else h += '<p class="muted">ส่งไฟล์แนบ ' + nF + ' ไฟล์ให้ AI เทียบกับข้อกำหนด ' + Math.min(nC, 60) + ' ข้อ • ใช้เวลาประมาณ 20–60 วินาที • มีค่าใช้จ่าย API ต่อครั้ง</p>';
+  else h += '<p class="muted">ส่งไฟล์แนบ ' + nF + ' ไฟล์ให้ ' + esc(aiName(cfg)) + ' เทียบกับข้อกำหนด ' + Math.min(nC, 60) + ' ข้อ • ใช้เวลาประมาณ 20–60 วินาที' + (cfg.provider === 'claude' ? ' • มีค่าใช้จ่าย API ต่อครั้ง' : ' • ฟรี (มีจำนวนครั้งจำกัด)') + '</p>';
   if (ai) {
     var cnt = function (v) { return ai.items.filter(function (x) { return x.verdict === v; }).length; };
     h += '<div class="row" style="margin:6px 0">' + badge(AI_OVR[ai.overall] || { k: 'na', t: ai.overall }) + '<span class="muted">ผ่าน ' + cnt('ผ่าน') + ' • ไม่ผ่าน ' + cnt('ไม่ผ่าน') + ' • ไม่พบข้อมูล ' + cnt('ไม่พบข้อมูล') + ' • ไม่เกี่ยวข้อง ' + cnt('ไม่เกี่ยวข้อง') + '</span>' +
@@ -1987,4 +2084,180 @@ function aiCard(s, cfg) {
   }
   return h + '</div>';
 }
+
+/* ---------------- ซิงก์ข้อมูลระหว่างเครื่อง (ผ่าน Google Apps Script ของผู้ใช้) ---------------- */
+var SYNC_STORES = ['projects', 'tasks', 'progress', 'daily', 'weekly', 'submittals', 'files', 'installments', 'vos', 'eots'];
+var SYNC = { running: false, timer: null, state: 'off', msg: '', pending: 0, last: null, silent: 0 };
+// ---- บันทึกทุกการเปลี่ยนแปลงลงคิว (outbox) ----
+var _raw = { put: DB.put, putMany: DB.putMany, del: DB.del, delMany: DB.delMany };
+function syncable(s) { return SYNC_STORES.indexOf(s) >= 0 && !SYNC.silent; }
+function nowIso() { return new Date().toISOString(); }
+function outboxPut(entries) { if (!entries.length) return Promise.resolve(); return tx('outbox', 'readwrite', function (os) { entries.forEach(function (e) { os.put(e); }); }).then(function () { SYNC.pending += entries.length; syncBadge(); scheduleSync(6000); }); }
+DB.put = function (s, o) {
+  if (!syncable(s)) return _raw.put(s, o);
+  o._ts = nowIso(); return _raw.put(s, o).then(function (r) { return outboxPut([{ k: s + '|' + o.id, store: s, id: o.id, op: 'put', t: o._ts }]).then(function () { return r; }); });
+};
+DB.putMany = function (s, arr) {
+  if (!syncable(s)) return _raw.putMany(s, arr);
+  var t = nowIso(); arr.forEach(function (o) { o._ts = t; });
+  return _raw.putMany(s, arr).then(function (r) { return outboxPut(arr.map(function (o) { return { k: s + '|' + o.id, store: s, id: o.id, op: 'put', t: t }; })).then(function () { return r; }); });
+};
+DB.del = function (s, id) {
+  if (!syncable(s)) return _raw.del(s, id);
+  var t = nowIso(); return _raw.del(s, id).then(function (r) { return outboxPut([{ k: s + '|' + id, store: s, id: id, op: 'del', t: t }]).then(function () { return r; }); });
+};
+DB.delMany = function (s, ids) {
+  if (!syncable(s)) return _raw.delMany(s, ids);
+  var t = nowIso(); return _raw.delMany(s, ids).then(function (r) { return outboxPut(ids.map(function (id) { return { k: s + '|' + id, store: s, id: id, op: 'del', t: t }; })).then(function () { return r; }); });
+};
+async function silently(fn) { SYNC.silent++; try { return await fn(); } finally { SYNC.silent--; } }
+function outboxAll() { return tx('outbox', 'readonly', function (os) { return os.getAll(); }); }
+function outboxGet(k) { return tx('outbox', 'readonly', function (os) { return os.get(k); }); }
+function outboxDel(keys) { return tx('outbox', 'readwrite', function (os) { keys.forEach(function (k) { os.delete(k); }); }); }
+async function syncCfg() { return (await meta('sync')) || null; }
+async function syncResetLocal() { await tx('outbox', 'readwrite', function (os) { return os.clear(); }); var c = await syncCfg(); if (c) { c.cursor = 0; await meta('sync', c); } SYNC.pending = 0; syncBadge(); }
+// ---- เรียกตัวกลาง (ใช้ text/plain เพื่อไม่ให้เกิด CORS preflight ซึ่ง Apps Script ไม่รองรับ) ----
+async function syncCall(c, action, payload) {
+  var res;
+  try { res = await fetch(c.url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(Object.assign({ action: action, key: c.key }, payload || {})), redirect: 'follow' }); }
+  catch (e) { throw new Error('เชื่อมต่อเครื่องซิงก์ไม่ได้ – ตรวจอินเทอร์เน็ตและลิงก์'); }
+  var t = await res.text(), j; try { j = JSON.parse(t); } catch (e) { throw new Error('ลิงก์ซิงก์ไม่ถูกต้อง (ไม่ใช่ลิงก์ Web app ที่ลงท้ายด้วย /exec หรือยังไม่ได้ตั้ง Who has access: Anyone)'); }
+  if (!j.ok) throw new Error({ KEY: 'รหัสซิงก์ไม่ถูกต้อง', SETUP: 'ยังไม่ได้รันฟังก์ชัน setup ใน Apps Script', ACTION: 'โค้ดซิงก์ใน Apps Script เป็นเวอร์ชันเก่า' }[j.error] || ('ซิงก์ผิดพลาด: ' + j.error));
+  return j.data;
+}
+// ---- ไฟล์: อัปโหลดเมื่อส่ง • ดาวน์โหลดเมื่อจะใช้ ----
+var _blobJobs = {};
+function ensureBlob(f) {
+  if (f.blob) return Promise.resolve(f.blob);
+  if (!f.driveId) return Promise.reject(new Error('ไม่พบไฟล์ในเครื่องนี้'));
+  if (_blobJobs[f.id]) return _blobJobs[f.id];
+  _blobJobs[f.id] = syncCfg().then(function (c) { if (!c) throw new Error('ไฟล์อยู่บนคลาวด์ – เปิดการซิงก์เพื่อโหลด'); return syncCall(c, 'getFile', { driveId: f.driveId }); })
+    .then(function (r) { f.blob = blobFromB64(r.data, r.mime || f.mime); return silently(function () { return DB.get('files', f.id).then(function (cur) { if (cur) { cur.blob = f.blob; return _raw.put('files', cur); } }); }).then(function () { return f.blob; }); })
+    .finally(function () { delete _blobJobs[f.id]; });
+  return _blobJobs[f.id];
+}
+// ---- ส่งขึ้น ----
+async function syncPush(c) {
+  var ob = (await outboxAll()).sort(function (a, b) { return a.t < b.t ? -1 : 1; }), done = [], batch = [], size = 0;
+  var flush = async function () { if (!batch.length) return; var keys = batch.map(function (x) { return x.k; }); await syncCall(c, 'push', { records: batch.map(function (x) { return x.rec; }) }); done = done.concat(keys); batch = []; size = 0; };
+  for (var i = 0; i < ob.length; i++) {
+    var e = ob[i], rec;
+    if (e.op === 'del') rec = { store: e.store, id: e.id, projectId: '', ts: e.t, deleted: true };
+    else {
+      var o = await DB.get(e.store, e.id); if (!o) { done.push(e.k); continue; }
+      if (e.store === 'files' && !o.driveId && o.blob) {
+        var up = await syncCall(c, 'putFile', { id: o.id, mime: o.mime, name: o.name, data: await b64FromBlob(o.blob) });
+        o.driveId = up.driveId; await silently(function () { return _raw.put('files', o); });
+        var mf = S.files.filter(function (x) { return x.id === o.id; })[0]; if (mf) mf.driveId = up.driveId;
+      }
+      var d = {}; Object.keys(o).forEach(function (k) { if (k !== 'blob' && (k[0] !== '_' || k === '_ts')) d[k] = o[k]; });
+      rec = { store: e.store, id: o.id, projectId: o.projectId || '', ts: o._ts || e.t, deleted: false, data: d };
+    }
+    var len = JSON.stringify(rec).length;
+    if (size + len > 2000000 || batch.length >= 300) await flush();
+    batch.push({ k: e.k, rec: rec }); size += len;
+  }
+  await flush();
+  // ลบออกจากคิวเฉพาะรายการที่ไม่มีการแก้ไขใหม่ระหว่างส่ง
+  var cur = await outboxAll(), sent = {}; ob.forEach(function (e) { sent[e.k] = e.t; });
+  await outboxDel(cur.filter(function (e) { return done.indexOf(e.k) >= 0 && sent[e.k] === e.t; }).map(function (e) { return e.k; }));
+  return ob.length;
+}
+// ---- ดึงลง (ฉบับที่แก้ล่าสุดเป็นฉบับที่ใช้) ----
+async function syncPull(c) {
+  var cursor = c.cursor || 0, more = true, changed = false;
+  while (more) {
+    var r = await syncCall(c, 'pull', { since: cursor });
+    for (var i = 0; i < r.records.length; i++) {
+      var rec = r.records[i]; if (SYNC_STORES.indexOf(rec.store) < 0) continue;
+      var local = await DB.get(rec.store, rec.id), pend = await outboxGet(rec.store + '|' + rec.id);
+      var localTs = pend ? pend.t : (local && local._ts) || '';
+      if (localTs && localTs > rec.ts) continue;
+      await silently(async function () {
+        if (rec.deleted) { if (local) { await _raw.del(rec.store, rec.id); changed = true; } }
+        else {
+          var d = rec.data || {}; if (!d.id) return;
+          if (rec.store === 'files') d.blob = local && local.blob && (!d.driveId || local.driveId === d.driveId || !local.driveId) ? local.blob : null;
+          if (!local || JSON.stringify(Object.assign({}, local, { blob: 0 })) !== JSON.stringify(Object.assign({}, d, { blob: 0 }))) { await _raw.put(rec.store, d); changed = true; }
+        }
+      });
+      if (pend && pend.t <= rec.ts) await outboxDel([pend.k]);
+    }
+    cursor = r.cursor; more = r.more;
+  }
+  c.cursor = cursor; await meta('sync', c);
+  return changed;
+}
+async function syncNow(manual) {
+  var c = await syncCfg(); if (!c || !c.url) return;
+  if (SYNC.running) { SYNC.again = true; return; }
+  if (!navigator.onLine) { SYNC.state = 'offline'; syncBadge(); return; }
+  SYNC.running = true; SYNC.state = 'busy'; syncBadge();
+  try {
+    await syncPush(c); var changed = await syncPull(await syncCfg());
+    SYNC.pending = (await outboxAll()).length; SYNC.last = new Date(); SYNC.state = 'ok'; SYNC.msg = '';
+    c = await syncCfg(); c.lastSync = SYNC.last.toISOString(); await meta('sync', c);
+    if (changed) await syncRefresh();
+    if (manual) toast('ซิงก์ข้อมูลแล้ว');
+  } catch (e) { SYNC.state = 'err'; SYNC.msg = e.message; if (manual) toast(e.message, true); }
+  finally { SYNC.running = false; syncBadge(); if (SYNC.again) { SYNC.again = false; scheduleSync(1500); } }
+}
+function userBusy() {
+  if ($('.mbg')) return true;
+  var a = document.activeElement; if (a && /INPUT|TEXTAREA|SELECT/.test(a.tagName) && $('#main').contains(a)) return true;
+  return !!(S.dailyDraft || S.weekDraft);
+}
+async function syncRefresh() {
+  if (userBusy()) { S.needRefresh = true; toast('มีข้อมูลใหม่จากอีกเครื่อง – จะแสดงเมื่อออกจากหน้านี้', false, 4000); return; }
+  S.needRefresh = false; if (S.P) { var id = S.P.id; S.P = null; await loadProject(id); if (!S.P) return go('/'); } render();
+}
+function scheduleSync(ms) { clearTimeout(SYNC.timer); SYNC.timer = setTimeout(function () { syncNow(false); }, ms || 6000); }
+function syncBadge() {
+  var b = $('#syncBtn'); if (!b) return;
+  syncCfg().then(function (c) {
+    if (!c) { b.classList.add('hidden'); return; } b.classList.remove('hidden');
+    var t = { busy: '<span class="spin"></span> กำลังซิงก์', offline: 'ออฟไลน์' + (SYNC.pending ? ' • รอส่ง ' + SYNC.pending : ''), err: 'ซิงก์ไม่สำเร็จ',
+      ok: 'ซิงก์แล้ว ' + (SYNC.last ? SYNC.last.toTimeString().slice(0, 5) : '') }[SYNC.state] || 'ซิงก์';
+    if (SYNC.state === 'ok' && SYNC.pending) t = 'รอส่ง ' + SYNC.pending;
+    b.innerHTML = ic('backup') + '<span class="hide-m">' + t + '</span>'; b.title = SYNC.msg || t.replace(/<[^>]+>/g, '');
+    b.style.borderColor = SYNC.state === 'err' ? '#ff8a80' : '';
+  });
+}
+async function syncCard() {
+  var c = await syncCfg(), sand = aiSandboxed();
+  var h = '<div class="card"><h2>ซิงก์ข้อมูลระหว่างเครื่อง (คอมพิวเตอร์ – iPad)</h2>';
+  if (sand) return h + '<p class="muted">หน้าทดลองนี้เชื่อมต่อภายนอกไม่ได้ – ตั้งค่าซิงก์ในแอปที่เปิดจาก GitHub Pages</p></div>';
+  if (c) {
+    var ob = (await outboxAll()).length;
+    return h + '<div class="kpis">' + kpi('สถานะ', SYNC.state === 'err' ? 'ผิดพลาด' : SYNC.state === 'busy' ? 'กำลังซิงก์' : 'เชื่อมต่อแล้ว', SYNC.msg || '', SYNC.state === 'err' ? 'bad-t' : 'ok-t') +
+      kpi('ซิงก์ล่าสุด', c.lastSync ? th(c.lastSync.slice(0, 10), true) + ' ' + new Date(c.lastSync).toTimeString().slice(0, 5) : '-') + kpi('รอส่งขึ้นคลาวด์', ob + ' รายการ') + '</div>' +
+      '<p class="muted" style="margin-top:10px">ซิงก์อัตโนมัติเมื่อเปิดแอป เมื่อแก้ไขข้อมูล และทุก 1 นาที • ถ้าแก้รายการเดียวกันจากสองเครื่อง ฉบับที่แก้ล่าสุดจะเป็นฉบับที่ใช้ • รูปถ่ายโหลดเมื่อเปิดดู</p>' +
+      '<div class="row"><button class="btn" data-act="syncNow">' + ic('backup') + 'ซิงก์เดี๋ยวนี้</button><button class="btn ghost bad-t" data-act="syncOff">ยกเลิกการเชื่อมต่อในเครื่องนี้</button></div></div>';
+  }
+  return h + '<p>เก็บข้อมูลทุกโครงการไว้ใน <b>Google Drive ของคุณ</b> แล้วใช้ร่วมกันได้ทุกเครื่อง • ติดตั้งตัวกลาง (Apps Script) ครั้งเดียวตามขั้นตอนใน README ส่วน "ซิงก์ข้อมูลระหว่างเครื่อง" แล้วนำลิงก์กับรหัสมาใส่ด้านล่าง <b>ทุกเครื่องใช้ลิงก์และรหัสเดียวกัน</b></p>' +
+    '<div class="grid2">' + inp('syUrl', 'ลิงก์ Web app (https://script.google.com/macros/s/…/exec)', '', 'url', 'autocomplete="off"') + inp('syKey', 'รหัสซิงก์', '', 'password', 'autocomplete="off"') + '</div>' +
+    '<div class="row" style="margin-top:10px"><button class="btn" data-act="syncOn">เชื่อมต่อและซิงก์</button></div>' +
+    '<p class="muted">เชื่อมต่อครั้งแรก: ข้อมูลในเครื่องนี้จะถูกส่งขึ้นคลาวด์ และดึงข้อมูลจากเครื่องอื่นลงมารวมกัน</p></div>';
+}
+async function syncConnect(url, key) {
+  url = url.trim(); key = key.trim();
+  if (!/^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(url) && !/^http:\/\/localhost:\d+\/exec$/.test(url)) throw new Error('ลิงก์ต้องเป็น https://script.google.com/macros/s/…/exec');
+  if (!key) throw new Error('กรอกรหัสซิงก์');
+  var c = { url: url, key: key, cursor: 0 }, info = await syncCall(c, 'info', {});
+  await meta('sync', c);
+  // ส่งข้อมูลที่มีอยู่ในเครื่องขึ้นคลาวด์ (ครั้งแรก)
+  var entries = [];
+  for (var i = 0; i < SYNC_STORES.length; i++) {
+    var s = SYNC_STORES[i], rows = await DB.all(s), fix = [];
+    rows.forEach(function (o) { if (!o._ts) { o._ts = o.updated || o.created || nowIso(); fix.push(o); } entries.push({ k: s + '|' + o.id, store: s, id: o.id, op: 'put', t: o._ts }); });
+    if (fix.length) await _raw.putMany(s, fix);
+  }
+  if (entries.length) await tx('outbox', 'readwrite', function (os) { entries.forEach(function (e) { os.put(e); }); });
+  SYNC.pending = entries.length;
+  return info;
+}
+window.addEventListener('online', function () { scheduleSync(1000); });
+document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') scheduleSync(800); });
+setInterval(function () { if (document.visibilityState === 'visible') syncNow(false); }, 60000);
+window.addEventListener('hashchange', function () { if (S.needRefresh) setTimeout(function () { if (!userBusy()) syncRefresh(); }, 300); });
 

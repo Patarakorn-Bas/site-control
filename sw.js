@@ -1,6 +1,6 @@
 /* Service worker: ทำให้แอปเปิดได้แม้ไม่มีอินเทอร์เน็ต • เปลี่ยน VERSION ทุกครั้งที่อัปเดตไฟล์ */
-var VERSION = 'sc-v2.1.0';
-var CORE = ['./', 'index.html', 'app.js', 'spec-data.js', 'manifest.webmanifest', 'vendor/chart.umd.min.js', 'vendor/xlsx.full.min.js', 'vendor/jszip.min.js', 'templates/template_single.xlsx', 'templates/template_multi.xlsx',
+var VERSION = 'sc-v2.3.0';
+var CORE = ['./', 'index.html', 'app.js', 'spec-data.js', 'manifest.webmanifest', 'vendor/chart.umd.min.js', 'vendor/xlsx.full.min.js', 'vendor/jszip.min.js', 'fonts/THSarabunPSK-Regular.woff2', 'fonts/THSarabunPSK-Bold.woff2', 'templates/template_single.xlsx', 'templates/template_multi.xlsx',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png', 'icons/apple-touch-icon.png'];
 self.addEventListener('install', function (e) { e.waitUntil(caches.open(VERSION).then(function (c) { return c.addAll(CORE); })); });
 self.addEventListener('activate', function (e) {
