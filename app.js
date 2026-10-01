@@ -2,7 +2,7 @@
    คุมงานก่อสร้าง (PWA) — ใช้งานคนเดียว ข้อมูลเก็บในเครื่อง (IndexedDB)
    ===================================================================== */
 'use strict';
-var APP_VERSION = '2.3.0';
+var APP_VERSION = '2.4.0';
 
 /* ---------------- IndexedDB ---------------- */
 var DB_NAME = 'sitecontrol', DB_VER = 3;
@@ -1155,9 +1155,9 @@ async function vApp() {
   var aiHtml = '<div class="card"><h2>AI ตรวจสเปกวัสดุ</h2>' +
     (aiSandboxed() ? '<div class="banner warn">' + ic('alert') + '<span class="grow">หน้าทดลองนี้ไม่อนุญาตให้เชื่อมต่อภายนอก – AI ใช้ได้เมื่อเปิดแอปจาก GitHub Pages</span></div>' : '') +
     '<label class="f">ผู้ให้บริการ AI</label><div class="seg" id="aiProv"><button data-prov="gemini" class="' + (gem ? 'on' : '') + '">Google Gemini (ฟรี)</button><button data-prov="claude" class="' + (gem ? '' : 'on') + '">Claude (เสียค่าใช้จ่าย)</button></div>' +
-    '<div id="aiGem" class="' + (gem ? '' : 'hidden') + '"><p class="muted" style="margin-top:10px"><b>วิธีรับคีย์ฟรี:</b> เข้า <b>aistudio.google.com</b> ด้วยบัญชี Google → <b>Get API key</b> → <b>Create API key</b> → คัดลอกคีย์ (ขึ้นต้น AIza…) มาวางด้านล่าง • ไม่ต้องใช้บัตรเครดิต</p>' +
+    '<div id="aiGem" class="' + (gem ? '' : 'hidden') + '"><p class="muted" style="margin-top:10px"><b>วิธีรับคีย์ฟรี:</b> เข้า <b>aistudio.google.com</b> ด้วยบัญชี Google → <b>Get API key</b> → <b>Create API key</b> → คัดลอกคีย์ (คีย์แบบใหม่ขึ้นต้นด้วย <b>AQ.</b> – คีย์เดิมที่ขึ้นต้น AIza ก็ใช้ได้) มาวางด้านล่าง • ไม่ต้องใช้บัตรเครดิต</p>' +
     '<div class="banner warn">' + ic('alert') + '<span class="grow">แบบฟรี: Google อาจนำข้อมูลที่ส่งตรวจไปใช้ปรับปรุงบริการ และจำกัดจำนวนครั้งต่อนาที/ต่อวัน – อย่าส่งเอกสารลับของทางราชการ</span></div>' +
-    '<div class="grid2">' + inp('aiGKey', 'Gemini API key (AIza…)', mask(ai.gkey), 'password', 'autocomplete="off"') + inp('aiGModel', 'โมเดล (เว้นว่าง = เลือกอัตโนมัติ)', ai.gmodel) + '</div></div>' +
+    '<div class="grid2">' + inp('aiGKey', 'Gemini API key (AQ.… หรือ AIza…)', mask(ai.gkey), 'password', 'autocomplete="off"') + inp('aiGModel', 'โมเดล (เว้นว่าง = เลือกอัตโนมัติ)', ai.gmodel) + '</div></div>' +
     '<div id="aiCla" class="' + (gem ? 'hidden' : '') + '"><p class="muted" style="margin-top:10px">console.anthropic.com → เติมเครดิต → API Keys • มีค่าใช้จ่ายตามการใช้งาน</p>' +
     '<div class="grid2">' + inp('aiKey', 'Claude API key (sk-ant-…)', mask(ai.key), 'password', 'autocomplete="off"') + inp('aiModel', 'โมเดล', ai.model || AI_DEFAULT_MODEL) + '</div></div>' +
     '<div class="grid2">' + inp('aiLimit', 'จำกัดจำนวนครั้งต่อวัน (ครั้งที่ผิดพลาดนับด้วย)', ai.limit, 'number', 'min="1"') + '</div>' +
@@ -1371,7 +1371,7 @@ document.addEventListener('click', async function (e) {
     else if (a === 'aiSave') {
       var cfg = await aiCfg(), prov = ($('#aiProv button.on') || {}).dataset ? $('#aiProv button.on').dataset.prov : 'gemini', gk = $('#aiGKey').value.trim(), ck = $('#aiKey').value.trim();
       cfg.provider = prov;
-      if (gk && gk.indexOf('••') !== 0) { if (!/^AIza[\w-]{20,}$/.test(gk)) throw new Error('Gemini API key ต้องขึ้นต้นด้วย AIza'); cfg.gkey = gk; cfg.gmodel = ''; }
+      if (gk && gk.indexOf('••') !== 0) { if (!geminiKeyOk(gk)) throw new Error('Gemini API key ไม่ถูกต้อง – คีย์ต้องขึ้นต้นด้วย AQ. (แบบใหม่) หรือ AIza (แบบเดิม) และคัดลอกให้ครบทุกตัวอักษร'); cfg.gkey = gk; cfg.gmodel = ''; }
       if (ck && ck.indexOf('••') !== 0) { if (!/^sk-ant-/.test(ck)) throw new Error('Claude API key ต้องขึ้นต้นด้วย sk-ant-'); cfg.key = ck; }
       var gm = $('#aiGModel').value.trim(); if (gm !== (cfg.gmodel || '')) cfg.gmodel = gm;
       cfg.model = $('#aiModel').value.trim() || AI_DEFAULT_MODEL; cfg.limit = Math.max(1, Math.round(num($('#aiLimit').value) || 30));
@@ -1973,10 +1973,23 @@ function pickGemini(ids) {
   var c = ids.filter(function (id) { return /^gemini-[\d.]+-flash/.test(id) && !/image|tts|audio|live|thinking|embedding/.test(id); });
   return c.sort(function (a, b) { return score(b) - score(a); })[0] || ids.filter(function (id) { return /flash/.test(id); })[0] || '';
 }
+// คีย์ Gemini: แบบใหม่ขึ้นต้น "AQ." (Auth key ตั้งแต่ มิ.ย. 2569) และแบบเดิม "AIza" • ส่งผ่าน header ก่อน ถ้าไม่ผ่านลองส่งทาง ?key=
+function geminiKeyOk(k) { return /^AQ\.[\w.\-]{16,}$/.test(k) || /^AIza[\w\-]{20,}$/.test(k); }
+async function gfetch(url, opts, key) {
+  opts = opts || {}; var r = null;
+  try { r = await fetch(url, Object.assign({}, opts, { headers: Object.assign({}, opts.headers || {}, { 'x-goog-api-key': key }) })); } catch (e) { if (e.name === 'AbortError') throw e; }
+  if (r && r.status !== 401 && r.status !== 403) return r;
+  try { return await fetch(url + (url.indexOf('?') >= 0 ? '&' : '?') + 'key=' + encodeURIComponent(key), opts); }
+  catch (e) { if (e.name === 'AbortError' || !r) throw e; return r; }
+}
+function geminiAuthError(status, text) {
+  if (/ACCESS_TOKEN_TYPE_UNSUPPORTED/.test(text)) return 'Google ยังไม่ยอมรับคีย์นี้กับ Gemini API – ที่ aistudio.google.com เมนู API Keys ให้ตรวจว่าคีย์ผูกกับโปรเจกต์แล้ว และตั้ง "Restrict to Gemini API" (หรือสร้างคีย์ใหม่) แล้วลองอีกครั้ง';
+  if (/API_KEY_INVALID|API key not valid/i.test(text) || status === 400 || status === 401 || status === 403) return 'API key ของ Gemini ไม่ถูกต้อง หรือยังไม่ได้เปิดใช้ Gemini API – คัดลอกคีย์ใหม่จาก aistudio.google.com ให้ครบทุกตัวอักษร';
+  return '';
+}
 async function geminiModels(key) {
-  var r = await fetch(GEMINI_URL + '/models?pageSize=200&key=' + encodeURIComponent(key)).catch(function () { throw new Error('เชื่อมต่อ Gemini ไม่ได้ – ตรวจอินเทอร์เน็ต'); });
-  if (r.status === 400 || r.status === 403) throw new Error('API key ของ Gemini ไม่ถูกต้อง');
-  if (!r.ok) throw new Error('เชื่อมต่อ Gemini ไม่ได้ (' + r.status + ')');
+  var r = await gfetch(GEMINI_URL + '/models?pageSize=200', {}, key).catch(function () { throw new Error('เชื่อมต่อ Gemini ไม่ได้ – ตรวจอินเทอร์เน็ต'); });
+  if (!r.ok) { var et = await r.text(); throw new Error(geminiAuthError(r.status, et) || ('เชื่อมต่อ Gemini ไม่ได้ (' + r.status + ')')); }
   return ((await r.json()).models || []).filter(function (m) { return (m.supportedGenerationMethods || []).indexOf('generateContent') >= 0; })
     .map(function (m) { return String(m.name).replace(/^models\//, ''); });
 }
@@ -2031,18 +2044,19 @@ async function aiCheck(s) {
   var ctl = new AbortController(), timer = setTimeout(function () { ctl.abort(); }, 180000), res, url, body, headers, model = gem ? cfg.gmodel : (cfg.model || AI_DEFAULT_MODEL);
   if (gem) {
     var parts = []; datas.forEach(function (d, i) { parts.push({ text: intro[i] }); parts.push({ inline_data: { mime_type: d.mime, data: d.data } }); }); parts.push({ text: ask });
-    url = GEMINI_URL + '/models/' + encodeURIComponent(model) + ':generateContent?key=' + encodeURIComponent(cfg.gkey); headers = { 'content-type': 'application/json' };
+    url = GEMINI_URL + '/models/' + encodeURIComponent(model) + ':generateContent'; headers = { 'content-type': 'application/json' };
     body = { systemInstruction: { parts: [{ text: AI_SYSTEM }] }, contents: [{ role: 'user', parts: parts }], generationConfig: { temperature: 0.1, responseMimeType: 'application/json', maxOutputTokens: 8192 } };
   } else {
     var content = []; datas.forEach(function (d, i) { var src = { type: 'base64', media_type: d.mime, data: d.data }; content.push({ type: 'text', text: intro[i] }); content.push(d.mime === 'application/pdf' ? { type: 'document', source: src } : { type: 'image', source: src }); });
     content.push({ type: 'text', text: ask });
     url = AI_URL + '/messages'; headers = aiHeaders(cfg.key); body = { model: model, max_tokens: 4000, system: AI_SYSTEM, messages: [{ role: 'user', content: content }] };
   }
-  try { res = await fetch(url, { method: 'POST', headers: headers, signal: ctl.signal, body: JSON.stringify(body) }); }
+  try { var fo = { method: 'POST', headers: headers, signal: ctl.signal, body: JSON.stringify(body) }; res = gem ? await gfetch(url, fo, cfg.gkey) : await fetch(url, fo); }
   catch (e) { throw new Error(e.name === 'AbortError' ? 'AI ใช้เวลานานเกินไป ลองลดจำนวนไฟล์แล้วตรวจใหม่' : 'เชื่อมต่อ AI ไม่ได้ – ตรวจอินเทอร์เน็ต'); } finally { clearTimeout(timer); }
   var txt = await res.text();
   if (!res.ok) {
     var msg = txt; try { var ej = JSON.parse(txt); msg = (ej.error && ej.error.message) || msg; } catch (e) {}
+    if (gem && geminiAuthError(res.status, txt) && res.status !== 429) throw new Error(geminiAuthError(res.status, txt));
     if (res.status === 429) throw new Error(gem ? 'เกินโควตาฟรีของ Gemini (จำกัดต่อนาที/ต่อวัน) – รอสักครู่แล้วลองใหม่ หรือลองพรุ่งนี้' : 'AI ไม่ว่างหรือเกินโควตา (429) – ลองใหม่ภายหลัง');
     throw new Error('AI ตอบกลับผิดพลาด (' + res.status + '): ' + String(msg).slice(0, 160));
   }
