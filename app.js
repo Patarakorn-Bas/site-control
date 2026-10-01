@@ -2,11 +2,11 @@
    คุมงานก่อสร้าง (PWA) — ใช้งานคนเดียว ข้อมูลเก็บในเครื่อง (IndexedDB)
    ===================================================================== */
 'use strict';
-var APP_VERSION = '2.4.0';
+var APP_VERSION = '2.5.0';
 
 /* ---------------- IndexedDB ---------------- */
-var DB_NAME = 'sitecontrol', DB_VER = 3;
-var STORES = ['projects', 'tasks', 'progress', 'daily', 'weekly', 'submittals', 'files', 'meta', 'installments', 'vos', 'eots'];
+var DB_NAME = 'sitecontrol', DB_VER = 4;
+var STORES = ['projects', 'tasks', 'progress', 'daily', 'weekly', 'submittals', 'files', 'meta', 'installments', 'vos', 'eots', 'docs'];
 var _db = null;
 function openDB() {
   if (_db) return Promise.resolve(_db);
@@ -283,8 +283,8 @@ function after(fn) { _after.push(fn); }
 function afterRender() { var q = _after; _after = []; q.forEach(function (f) { try { f(); } catch (e) { console.error(e); } }); hydrateImgs(); }
 async function loadProject(id) {
   var p = await DB.get('projects', id); S.P = p || null; if (!p) return;
-  var res = await Promise.all(['tasks', 'progress', 'daily', 'weekly', 'submittals', 'files', 'installments', 'vos', 'eots'].map(function (s) { return DB.byProject(s, id); }));
-  S.tasks = res[0]; S.progress = res[1]; S.daily = res[2]; S.weekly = res[3]; S.submittals = res[4]; S.files = res[5]; S.installments = res[6]; S.vos = res[7]; S.eots = res[8];
+  var res = await Promise.all(['tasks', 'progress', 'daily', 'weekly', 'submittals', 'files', 'installments', 'vos', 'eots', 'docs'].map(function (s) { return DB.byProject(s, id); }));
+  S.tasks = res[0]; S.progress = res[1]; S.daily = res[2]; S.weekly = res[3]; S.submittals = res[4]; S.files = res[5]; S.installments = res[6]; S.vos = res[7]; S.eots = res[8]; S.docs = res[9];
   Object.keys(S.urls).forEach(function (k) { URL.revokeObjectURL(S.urls[k]); }); S.urls = {};
 }
 async function saveProject() { S.P.updated = new Date().toISOString(); await DB.put('projects', S.P); }
@@ -937,15 +937,14 @@ async function saveWeekly() {
 
 /* ---------------- PRINT DOCUMENTS ---------------- */
 async function vPrint(args) {
-  var kind = args[0], key = args[1], back = kind === 'daily' ? '/daily/' + key : kind === 'weekly' ? '/weekly/' + key : '/mat/' + key;
-  var bar = '<div class="card noprint"><div class="row"><button class="btn sm sec" data-go="/p/' + S.P.id + back + '">← กลับ</button><button class="btn" data-act="print">พิมพ์ / บันทึกเป็น PDF</button>' +
-    '<span class="muted">เลือกเครื่องพิมพ์ "บันทึกเป็น PDF" เพื่อได้ไฟล์ส่งต่อ</span></div></div>';
-  if (kind === 'daily') return bar + docDaily(key);
-  if (kind === 'weekly') { after(function () { drawCurve($('#wcurve'), weekRange(+key).end > today() ? today() : weekRange(+key).end); }); return bar + docWeekly(+key); }
-  if (kind === 'mat') return bar + docMat(key);
-  if (kind === 'pay') return bar + docPay(key);
-  if (kind === 'dash') return bar + docDash();
-  return bar;
+  var kind = args[0], key = args[1], html;
+  if (kind === 'daily') html = docDaily(key);
+  else if (kind === 'weekly') { var we = weekRange(+key).end; after(function () { drawCurve($('#wcurve'), we > today() ? today() : we); }); html = docWeekly(+key); }
+  else if (kind === 'mat') html = docMat(key);
+  else if (kind === 'pay') html = docPay(key);
+  else if (kind === 'dash') html = docDash();
+  else return '<div class="card empty">ไม่พบเอกสาร</div>';
+  return docWrap(kind, key, html);
 }
 function docHead(title) {
   var p = S.P;
@@ -955,7 +954,7 @@ function docHead(title) {
 }
 function photoGrid(list, label) {
   if (!list.length) return '';
-  return '<div class="pgrid">' + list.map(function (f, i) { return '<figure><img data-fimg="' + f.id + '" alt=""><figcaption>' + label + ' ' + (i + 1) + (f.ref && /^\d{4}-/.test(f.ref) ? ' (' + th(f.ref, true) + ')' : '') + (f.caption ? ' ' + esc(f.caption) : '') + '</figcaption></figure>'; }).join('') + '</div>';
+  return '<div class="pgrid">' + list.map(function (f, i) { return '<figure><img data-fimg="' + f.id + '" data-fid="' + f.id + '" alt=""><figcaption>' + label + ' ' + (i + 1) + (f.ref && /^\d{4}-/.test(f.ref) ? ' (' + th(f.ref, true) + ')' : '') + (f.caption ? ' ' + esc(f.caption) : '') + '</figcaption></figure>'; }).join('') + '</div>';
 }
 function docDaily(dIso) {
   var r = dailyOf(dIso) || { manpower: [], machinery: [] }, d = D(dIso), p = S.P, hist = histIndex(), prev = iso(addDays(d, -1));
@@ -1151,15 +1150,15 @@ async function vApp() {
   var standalone = window.matchMedia && matchMedia('(display-mode: standalone)').matches;
   var ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
   var ai = await aiCfg(), used = num((ai.used || {})[iso(today())]);
-  var gem = ai.provider !== 'claude', mask = function (k) { return k ? '••••••••' + k.slice(-6) : ''; };
+  var gem = ai.provider !== 'claude', mask = function (k) { return k ? k.slice(0, 4) + '…' + k.slice(-4) : ''; };
   var aiHtml = '<div class="card"><h2>AI ตรวจสเปกวัสดุ</h2>' +
     (aiSandboxed() ? '<div class="banner warn">' + ic('alert') + '<span class="grow">หน้าทดลองนี้ไม่อนุญาตให้เชื่อมต่อภายนอก – AI ใช้ได้เมื่อเปิดแอปจาก GitHub Pages</span></div>' : '') +
     '<label class="f">ผู้ให้บริการ AI</label><div class="seg" id="aiProv"><button data-prov="gemini" class="' + (gem ? 'on' : '') + '">Google Gemini (ฟรี)</button><button data-prov="claude" class="' + (gem ? '' : 'on') + '">Claude (เสียค่าใช้จ่าย)</button></div>' +
     '<div id="aiGem" class="' + (gem ? '' : 'hidden') + '"><p class="muted" style="margin-top:10px"><b>วิธีรับคีย์ฟรี:</b> เข้า <b>aistudio.google.com</b> ด้วยบัญชี Google → <b>Get API key</b> → <b>Create API key</b> → คัดลอกคีย์ (คีย์แบบใหม่ขึ้นต้นด้วย <b>AQ.</b> – คีย์เดิมที่ขึ้นต้น AIza ก็ใช้ได้) มาวางด้านล่าง • ไม่ต้องใช้บัตรเครดิต</p>' +
     '<div class="banner warn">' + ic('alert') + '<span class="grow">แบบฟรี: Google อาจนำข้อมูลที่ส่งตรวจไปใช้ปรับปรุงบริการ และจำกัดจำนวนครั้งต่อนาที/ต่อวัน – อย่าส่งเอกสารลับของทางราชการ</span></div>' +
-    '<div class="grid2">' + inp('aiGKey', 'Gemini API key (AQ.… หรือ AIza…)', mask(ai.gkey), 'password', 'autocomplete="off"') + inp('aiGModel', 'โมเดล (เว้นว่าง = เลือกอัตโนมัติ)', ai.gmodel) + '</div></div>' +
+    '<div class="grid2">' + inp('aiGKey', 'Gemini API key (AQ.… หรือ AIza…)' + (ai.gkey ? ' – บันทึกไว้แล้ว: ' + esc(mask(ai.gkey)) : ''), '', 'text', 'autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true" data-form-type="other" placeholder="' + (ai.gkey ? 'เว้นว่างถ้าไม่เปลี่ยนคีย์' : 'วางคีย์ที่คัดลอกจาก AI Studio') + '"') + inp('aiGModel', 'โมเดล (เว้นว่าง = เลือกอัตโนมัติ)', ai.gmodel) + '</div></div>' +
     '<div id="aiCla" class="' + (gem ? 'hidden' : '') + '"><p class="muted" style="margin-top:10px">console.anthropic.com → เติมเครดิต → API Keys • มีค่าใช้จ่ายตามการใช้งาน</p>' +
-    '<div class="grid2">' + inp('aiKey', 'Claude API key (sk-ant-…)', mask(ai.key), 'password', 'autocomplete="off"') + inp('aiModel', 'โมเดล', ai.model || AI_DEFAULT_MODEL) + '</div></div>' +
+    '<div class="grid2">' + inp('aiKey', 'Claude API key (sk-ant-…)' + (ai.key ? ' – บันทึกไว้แล้ว: ' + esc(mask(ai.key)) : ''), '', 'text', 'autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true" data-form-type="other" placeholder="' + (ai.key ? 'เว้นว่างถ้าไม่เปลี่ยนคีย์' : 'sk-ant-…') + '"') + inp('aiModel', 'โมเดล', ai.model || AI_DEFAULT_MODEL) + '</div></div>' +
     '<div class="grid2">' + inp('aiLimit', 'จำกัดจำนวนครั้งต่อวัน (ครั้งที่ผิดพลาดนับด้วย)', ai.limit, 'number', 'min="1"') + '</div>' +
     '<p class="muted">ใช้วันนี้ ' + used + ' / ' + ai.limit + ' ครั้ง • สถานะ: ' + (aiReady(ai) ? '<span class="ok-t">พร้อมใช้ – ' + esc(aiName(ai)) + '</span>' : 'ยังไม่ได้ตั้งค่า') + ' • คีย์เก็บเฉพาะในเครื่องนี้ ไม่อยู่ในไฟล์สำรองหรือการซิงก์</p>' +
     '<div class="row"><button class="btn" data-act="aiSave">บันทึก</button><button class="btn sec" data-act="aiTest" ' + (aiReady(ai) ? '' : 'disabled') + '>ทดสอบการเชื่อมต่อ</button>' + (ai.key || ai.gkey ? '<button class="btn ghost bad-t" data-act="aiClear">ลบ API key</button>' : '') + '</div></div>';
@@ -1359,6 +1358,7 @@ document.addEventListener('click', async function (e) {
     }
     else if (a === 'exportXlsx') await exportXlsx();
     else if (a === 'exportV4') { el.disabled = true; var old = el.innerHTML; el.innerHTML = '<span class="spin"></span> กำลังสร้างไฟล์…'; try { await exportV4(); } finally { el.disabled = false; el.innerHTML = old; } }
+    else if (/^doc(Edit|Save|Cancel|Reset|Word)$/.test(a)) await docAction(a, el);
     else if (a === 'finSet') openFinSet();
     else if (a === 'syncNow') { await syncNow(true); render(); }
     else if (a === 'syncOn') {
@@ -1369,7 +1369,7 @@ document.addEventListener('click', async function (e) {
     else if (a === 'syncOff') { if (await confirmBox('ยกเลิกการซิงก์ในเครื่องนี้? ข้อมูลในเครื่องและบนคลาวด์ยังอยู่ครบ (รายการที่ยังไม่ได้ส่งจะไม่ถูกส่ง)', 'ยกเลิกการเชื่อมต่อ')) { await meta('sync', null); await syncResetLocal(); syncBadge(); render(); } }
     else if (a === 'printDash') go('/p/' + S.P.id + '/print/dash/0');
     else if (a === 'aiSave') {
-      var cfg = await aiCfg(), prov = ($('#aiProv button.on') || {}).dataset ? $('#aiProv button.on').dataset.prov : 'gemini', gk = $('#aiGKey').value.trim(), ck = $('#aiKey').value.trim();
+      var cfg = await aiCfg(), prov = ($('#aiProv button.on') || {}).dataset ? $('#aiProv button.on').dataset.prov : 'gemini', gk = $('#aiGKey').value.replace(/\s+/g, ''), ck = $('#aiKey').value.replace(/\s+/g, '');
       cfg.provider = prov;
       if (gk && gk.indexOf('••') !== 0) { if (!geminiKeyOk(gk)) throw new Error('Gemini API key ไม่ถูกต้อง – คีย์ต้องขึ้นต้นด้วย AQ. (แบบใหม่) หรือ AIza (แบบเดิม) และคัดลอกให้ครบทุกตัวอักษร'); cfg.gkey = gk; cfg.gmodel = ''; }
       if (ck && ck.indexOf('••') !== 0) { if (!/^sk-ant-/.test(ck)) throw new Error('Claude API key ต้องขึ้นต้นด้วย sk-ant-'); cfg.key = ck; }
@@ -2100,7 +2100,7 @@ function aiCard(s, cfg) {
 }
 
 /* ---------------- ซิงก์ข้อมูลระหว่างเครื่อง (ผ่าน Google Apps Script ของผู้ใช้) ---------------- */
-var SYNC_STORES = ['projects', 'tasks', 'progress', 'daily', 'weekly', 'submittals', 'files', 'installments', 'vos', 'eots'];
+var SYNC_STORES = ['projects', 'tasks', 'progress', 'daily', 'weekly', 'submittals', 'files', 'installments', 'vos', 'eots', 'docs'];
 var SYNC = { running: false, timer: null, state: 'off', msg: '', pending: 0, last: null, silent: 0 };
 // ---- บันทึกทุกการเปลี่ยนแปลงลงคิว (outbox) ----
 var _raw = { put: DB.put, putMany: DB.putMany, del: DB.del, delMany: DB.delMany };
@@ -2217,7 +2217,7 @@ async function syncNow(manual) {
   finally { SYNC.running = false; syncBadge(); if (SYNC.again) { SYNC.again = false; scheduleSync(1500); } }
 }
 function userBusy() {
-  if ($('.mbg')) return true;
+  if ($('.mbg') || $('#docEl.editing')) return true;
   var a = document.activeElement; if (a && /INPUT|TEXTAREA|SELECT/.test(a.tagName) && $('#main').contains(a)) return true;
   return !!(S.dailyDraft || S.weekDraft);
 }
@@ -2249,12 +2249,12 @@ async function syncCard() {
       '<div class="row"><button class="btn" data-act="syncNow">' + ic('backup') + 'ซิงก์เดี๋ยวนี้</button><button class="btn ghost bad-t" data-act="syncOff">ยกเลิกการเชื่อมต่อในเครื่องนี้</button></div></div>';
   }
   return h + '<p>เก็บข้อมูลทุกโครงการไว้ใน <b>Google Drive ของคุณ</b> แล้วใช้ร่วมกันได้ทุกเครื่อง • ติดตั้งตัวกลาง (Apps Script) ครั้งเดียวตามขั้นตอนใน README ส่วน "ซิงก์ข้อมูลระหว่างเครื่อง" แล้วนำลิงก์กับรหัสมาใส่ด้านล่าง <b>ทุกเครื่องใช้ลิงก์และรหัสเดียวกัน</b></p>' +
-    '<div class="grid2">' + inp('syUrl', 'ลิงก์ Web app (https://script.google.com/macros/s/…/exec)', '', 'url', 'autocomplete="off"') + inp('syKey', 'รหัสซิงก์', '', 'password', 'autocomplete="off"') + '</div>' +
+    '<div class="grid2">' + inp('syUrl', 'ลิงก์ Web app (https://script.google.com/macros/s/…/exec)', '', 'text', 'autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true" data-form-type="other" inputmode="url"') + inp('syKey', 'รหัสซิงก์ (24 ตัวอักษร)', '', 'text', 'autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true" data-form-type="other"') + '</div>' +
     '<div class="row" style="margin-top:10px"><button class="btn" data-act="syncOn">เชื่อมต่อและซิงก์</button></div>' +
     '<p class="muted">เชื่อมต่อครั้งแรก: ข้อมูลในเครื่องนี้จะถูกส่งขึ้นคลาวด์ และดึงข้อมูลจากเครื่องอื่นลงมารวมกัน</p></div>';
 }
 async function syncConnect(url, key) {
-  url = url.trim(); key = key.trim();
+  url = url.replace(/\s+/g, ''); key = key.replace(/\s+/g, '');
   if (!/^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(url) && !/^http:\/\/localhost:\d+\/exec$/.test(url)) throw new Error('ลิงก์ต้องเป็น https://script.google.com/macros/s/…/exec');
   if (!key) throw new Error('กรอกรหัสซิงก์');
   var c = { url: url, key: key, cursor: 0 }, info = await syncCall(c, 'info', {});
@@ -2274,4 +2274,209 @@ window.addEventListener('online', function () { scheduleSync(1000); });
 document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') scheduleSync(800); });
 setInterval(function () { if (document.visibilityState === 'visible') syncNow(false); }, 60000);
 window.addEventListener('hashchange', function () { if (S.needRefresh) setTimeout(function () { if (!userBusy()) syncRefresh(); }, 300); });
+
+/* ---------------- เอกสาร: แก้ไขข้อความ/บันทึก และดาวน์โหลดเป็น Word ---------------- */
+var DOC_TITLES = { daily: 'บันทึกประจำวัน', weekly: 'รายงานประจำสัปดาห์', mat: 'รายงานขออนุมัติวัสดุ', pay: 'ใบสรุปเงินค่างาน', dash: 'สรุปสถานะโครงการ' };
+function docId(kind, key) { return S.P.id + '|' + kind + '|' + key; }
+function docSaved(kind, key) { var id = docId(kind, key); return (S.docs || []).filter(function (d) { return d.id === id; })[0]; }
+function cleanHtml(h) {
+  var t = document.createElement('template'); t.innerHTML = String(h || '');
+  t.content.querySelectorAll('script,iframe,object,embed,link,style,meta,base,form').forEach(function (n) { n.remove(); });
+  t.content.querySelectorAll('*').forEach(function (n) {
+    Array.prototype.slice.call(n.attributes).forEach(function (a) {
+      if (/^on/i.test(a.name) || a.name === 'contenteditable' || (/^(src|href)$/i.test(a.name) && /^\s*(javascript|vbscript):/i.test(a.value))) n.removeAttribute(a.name);
+    });
+  });
+  return t.innerHTML;
+}
+// ห่อเอกสาร: ใช้ฉบับที่ผู้ใช้แก้ไว้ (ถ้ามี) แทนฉบับอัตโนมัติ
+function docWrap(kind, key, autoHtml) {
+  var sv = docSaved(kind, key), back = { daily: '/daily/' + key, weekly: '/weekly/' + key, mat: '/mat/' + key, pay: '/fin/inst', dash: '' }[kind];
+  var bar = '<div class="card noprint" id="docBar"><div class="row"><button class="btn sm sec" data-go="/p/' + S.P.id + back + '">' + ic('chevl') + 'กลับ</button>' +
+    '<button class="btn" data-act="print">' + ic('print') + 'พิมพ์ / บันทึกเป็น PDF</button>' +
+    '<button class="btn sec" data-act="docWord" data-kind="' + kind + '" data-key="' + esc(key) + '">' + ic('file') + 'ดาวน์โหลด Word</button>' +
+    '<button class="btn sec" data-act="docEdit">' + ic('edit') + 'แก้ไขข้อความ</button>' +
+    (sv ? '<span class="badge b-warn">ฉบับที่แก้ไขแล้ว • ' + th(sv.updated.slice(0, 10), true) + ' ' + new Date(sv.updated).toTimeString().slice(0, 5) + '</span>' +
+      '<button class="btn sm ghost" data-act="docReset" data-kind="' + kind + '" data-key="' + esc(key) + '">ใช้ฉบับอัตโนมัติ (ล้างการแก้ไข)</button>' : '') + '</div>' +
+    '<div class="row hidden" id="docEditBar" style="margin-top:10px"><span class="banner info" style="margin:0;flex:1">' + ic('edit') + '<span>คลิกที่ข้อความในเอกสารเพื่อแก้ไขได้ทันที • Ctrl+B ตัวหนา • แก้เสร็จแล้วกด <b>บันทึก</b></span></span>' +
+    '<button class="btn ok" data-act="docSave" data-kind="' + kind + '" data-key="' + esc(key) + '">' + ic('check') + 'บันทึก</button><button class="btn sec" data-act="docCancel">ยกเลิก</button></div>' +
+    (sv ? '<p class="muted" style="margin:8px 0 0">เอกสารนี้แสดงฉบับที่คุณแก้ไขไว้ – ข้อมูลที่อัปเดตภายหลังจะไม่ปรากฏ จนกว่าจะกด "ใช้ฉบับอัตโนมัติ"</p>' : '') + '</div>';
+  var body = sv ? '<div class="doc" id="docEl">' + cleanHtml(sv.html) + '</div>' : String(autoHtml).replace('<div class="doc">', '<div class="doc" id="docEl">');
+  return bar + body;
+}
+function canvasToImg(root) {
+  $$('canvas', root).forEach(function (c) {
+    try { var im = document.createElement('img'); im.className = 'chartimg'; im.src = c.toDataURL('image/png'); im.style.width = '100%'; im.alt = 'กราฟ'; var box = c.closest('.chartbox') || c; box.replaceWith(im); } catch (e) {}
+  });
+}
+async function docAction(a, el) {
+  var docEl = $('#docEl');
+  if (a === 'docEdit') {
+    if (!docEl) return; if (chart) { chart.destroy(); chart = null; }
+    await hydrateImgs(); canvasToImg(docEl);
+    docEl.contentEditable = 'true'; docEl.spellcheck = false; docEl.classList.add('editing');
+    $('#docEditBar').classList.remove('hidden'); el.classList.add('hidden'); docEl.focus(); return;
+  }
+  if (a === 'docCancel') { render(); return; }
+  if (a === 'docSave') {
+    var cl = docEl.cloneNode(true);
+    cl.removeAttribute('contenteditable'); cl.classList.remove('editing');
+    $$('img[data-fid]', cl).forEach(function (im) { im.removeAttribute('src'); im.setAttribute('data-fimg', im.getAttribute('data-fid')); });
+    var rec = { id: docId(el.dataset.kind, el.dataset.key), projectId: S.P.id, kind: el.dataset.kind, key: el.dataset.key, html: cleanHtml(cl.innerHTML), updated: new Date().toISOString() };
+    if (rec.html.length > 250000) throw new Error('เอกสารใหญ่เกินไปสำหรับการบันทึก (ลดรูปภาพหรือข้อความ)');
+    await DB.put('docs', rec); S.docs = (S.docs || []).filter(function (d) { return d.id !== rec.id; }).concat([rec]);
+    toast('บันทึกเอกสารที่แก้ไขแล้ว'); render(); return;
+  }
+  if (a === 'docReset') {
+    if (!(await confirmBox('ล้างการแก้ไข แล้วกลับไปใช้เอกสารที่สร้างจากข้อมูลล่าสุด?', 'ใช้ฉบับอัตโนมัติ'))) return;
+    var id = docId(el.dataset.kind, el.dataset.key); await DB.del('docs', id); S.docs = (S.docs || []).filter(function (d) { return d.id !== id; });
+    toast('กลับไปใช้ฉบับอัตโนมัติแล้ว'); render(); return;
+  }
+  if (a === 'docWord') {
+    var old = el.innerHTML; el.disabled = true; el.innerHTML = '<span class="spin"></span> กำลังสร้างไฟล์ Word…';
+    try { await docxExport(el.dataset.kind, el.dataset.key); } finally { el.disabled = false; el.innerHTML = old; }
+  }
+}
+
+/* ---- แปลงเอกสารบนหน้าจอเป็นไฟล์ Word (.docx) ---- */
+function loadDocxLib() {
+  if (window.docx && window.docx.Document) return Promise.resolve();
+  var tryLoad = function (src) { return new Promise(function (res, rej) { var s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = rej; document.head.appendChild(s); }); };
+  return tryLoad('vendor/docx.min.js').catch(function () { return tryLoad('https://cdn.jsdelivr.net/npm/docx@9.6.1/dist/index.iife.js'); })
+    .then(function () { if (!window.docx) throw 0; }).catch(function () { throw new Error('โหลดตัวสร้างไฟล์ Word ไม่ได้ (ตรวจอินเทอร์เน็ต)'); });
+}
+async function docxExport(kind, key) {
+  await loadDocxLib();
+  var root = $('#docEl'); if (!root) throw new Error('ไม่พบเอกสาร');
+  await hydrateImgs();
+  await Promise.all($$('img', root).map(function (im) { return im.complete && im.naturalWidth ? 0 : new Promise(function (r) { im.onload = im.onerror = r; setTimeout(r, 8000); }); }));
+  var X = window.docx, DXA = X.WidthType.DXA, CW = 9071, FONT = 'TH SarabunPSK', IMGSP = { line: 240, lineRule: X.LineRuleType.AUTO, before: 60, after: 60 };
+  var NB = { style: X.BorderStyle.NONE, size: 0, color: 'FFFFFF' }, NOB = { top: NB, bottom: NB, left: NB, right: NB, insideHorizontal: NB, insideVertical: NB };
+  var LB = { style: X.BorderStyle.SINGLE, size: 4, color: '999999' }, ALLB = { top: LB, bottom: LB, left: LB, right: LB, insideHorizontal: LB, insideVertical: LB };
+  var isBlock = function (n) { return n.nodeType === 1 && /^(DIV|P|H1|H2|H3|H4|TABLE|FIGURE|UL|OL|LI|SECTION|IMG|CANVAS)$/.test(n.tagName) && !(n.tagName === 'IMG' && n.closest('td')); };
+  var cleanTxt = function (t, pre) { return pre ? t : t.replace(/\s+/g, ' '); };
+  async function imgRun(src, maxW) {
+    var r = await fetch(src), b = await r.blob(), buf = new Uint8Array(await b.arrayBuffer());
+    var bmp = await createImageBitmap(b), w = bmp.width, h = bmp.height, sc = Math.min(1, maxW / w);
+    return new X.ImageRun({ type: /png/.test(b.type) ? 'png' : 'jpg', data: buf, transformation: { width: Math.round(w * sc), height: Math.round(h * sc) } });
+  }
+  // แปลงเนื้อหาแบบ inline เป็นบรรทัด (แต่ละบรรทัด = 1 Paragraph ตามกฎของ Word)
+  function inlineLines(node, st, lines, pre) {
+    node.childNodes.forEach(function (c) {
+      if (c.nodeType === 3) {
+        var parts = pre ? c.nodeValue.split('\n') : [cleanTxt(c.nodeValue)];
+        parts.forEach(function (tx, i) { if (i > 0) lines.push([]); if (tx) lines[lines.length - 1].push(new X.TextRun({ text: tx, bold: st.b, size: st.sz, font: FONT })); });
+      } else if (c.nodeType === 1) {
+        if (c.tagName === 'BR') { lines.push([]); return; }
+        if (isBlock(c)) { lines.push({ block: c }); lines.push([]); return; }
+        inlineLines(c, { b: st.b || /^(B|STRONG|TH)$/.test(c.tagName) || /font-weight:\s*(bold|[6-9]00)/.test(c.getAttribute('style') || ''), sz: st.sz }, lines, pre || getComputedStyle(c).whiteSpace.indexOf('pre') === 0);
+      }
+    });
+  }
+  async function convert(el, opt) {
+    opt = opt || {}; var out = [], sz = opt.sz || 32;
+    var lines = [[]]; inlineLines(el, { b: !!opt.b, sz: sz }, lines, !!opt.pre);
+    for (var i = 0; i < lines.length; i++) {
+      var ln = lines[i];
+      if (ln.block) { out = out.concat(await block(ln.block, opt)); continue; }
+      var hasText = ln.some(function (r) { return r; });
+      if (hasText || (opt.keepEmpty && i < lines.length - 1)) out.push(new X.Paragraph({ children: ln.length ? ln : [new X.TextRun({ text: '', font: FONT })], alignment: opt.align, indent: opt.indent, spacing: opt.spacing }));
+    }
+    return out;
+  }
+  function trim(arr) { while (arr.length && arr[arr.length - 1] instanceof X.Paragraph && arr[arr.length - 1].__empty) arr.pop(); return arr; }
+  async function cellOf(td, w, span, head, sz, al) {
+    var kids = await convert(td, { sz: sz, b: head, align: al, pre: getComputedStyle(td).whiteSpace.indexOf('pre') === 0 });
+    return new X.TableCell({ children: kids.length ? kids : [new X.Paragraph('')], width: { size: w, type: DXA }, columnSpan: span > 1 ? span : undefined,
+      shading: head ? { fill: 'E8ECF3', type: X.ShadingType.CLEAR, color: 'auto' } : undefined, margins: { top: 40, bottom: 40, left: 90, right: 90 } });
+  }
+  async function table(t) {
+    var rows = Array.prototype.slice.call(t.rows); if (!rows.length) return [];
+    var ncol = Math.max.apply(null, rows.map(function (r) { return Array.prototype.reduce.call(r.cells, function (a, c) { return a + (c.colSpan || 1); }, 0); }));
+    var ref = rows.filter(function (r) { return r.cells.length === ncol; })[0], widths;
+    if (ref) { var tot = Array.prototype.reduce.call(ref.cells, function (a, c) { return a + c.getBoundingClientRect().width; }, 0) || 1; widths = Array.prototype.map.call(ref.cells, function (c) { return Math.max(500, Math.round(CW * c.getBoundingClientRect().width / tot)); }); }
+    else widths = Array(ncol).fill(Math.floor(CW / ncol));
+    var diff = CW - widths.reduce(function (a, b) { return a + b; }, 0); widths[widths.length - 1] += diff;
+    var trs = [];
+    for (var i = 0; i < rows.length; i++) {
+      var cells = [], ci = 0;
+      for (var j = 0; j < rows[i].cells.length; j++) {
+        var td = rows[i].cells[j], sp = td.colSpan || 1, w = widths.slice(ci, ci + sp).reduce(function (a, b) { return a + b; }, 0); ci += sp;
+        var al = getComputedStyle(td).textAlign === 'right' ? X.AlignmentType.RIGHT : undefined;
+        cells.push(await cellOf(td, w, sp, td.tagName === 'TH', 28, al));
+      }
+      trs.push(new X.TableRow({ children: cells, cantSplit: true }));
+    }
+    return [new X.Table({ columnWidths: widths, width: { size: CW, type: DXA }, rows: trs, borders: ALLB }), new X.Paragraph({ children: [], spacing: { after: 60 } })];
+  }
+  async function layoutTable(cols, contents, widths, align) {
+    var cells = [];
+    for (var i = 0; i < cols; i++) cells.push(new X.TableCell({ children: contents[i] && contents[i].length ? contents[i] : [new X.Paragraph('')], width: { size: widths[i], type: DXA }, borders: { top: NB, bottom: NB, left: NB, right: NB } }));
+    return new X.Table({ columnWidths: widths, width: { size: CW, type: DXA }, rows: [new X.TableRow({ children: cells, cantSplit: true })], borders: NOB });
+  }
+  async function block(el, opt) {
+    var tag = el.tagName, cls = el.className || '', out = [];
+    if (tag === 'H1') return [new X.Paragraph({ children: [new X.TextRun({ text: el.textContent.trim(), bold: true, size: 40, font: FONT })], alignment: X.AlignmentType.CENTER, spacing: { after: 160 } })];
+    if (/^H[2-4]$/.test(tag)) return [new X.Paragraph({ children: [new X.TextRun({ text: el.textContent.trim(), bold: true, size: 32, font: FONT })], spacing: { before: 200, after: 80 },
+      border: { bottom: { style: X.BorderStyle.SINGLE, size: 6, color: '999999', space: 1 } }, keepNext: true })];
+    if (tag === 'TABLE') return table(el);
+    if (tag === 'CANVAS') return [new X.Paragraph({ children: [await imgRun(el.toDataURL('image/png'), 600)], alignment: X.AlignmentType.CENTER, spacing: IMGSP })];
+    if (tag === 'IMG') { if (!el.src) return []; return [new X.Paragraph({ children: [await imgRun(el.src, 600)], alignment: X.AlignmentType.CENTER, spacing: IMGSP })]; }
+    if (/\bpb\b/.test(cls)) return [new X.Paragraph({ children: [new X.PageBreak()] })];
+    if (/\bchartbox\b/.test(cls)) { var cv = el.querySelector('canvas'), im = el.querySelector('img'); if (cv) return block(cv); if (im) return block(im); return []; }
+    if (/\bmh\b/.test(cls)) {
+      var kids = Array.prototype.slice.call(el.children), rows = [];
+      for (var i = 0; i < kids.length; i += 2) {
+        var lab = await convert(kids[i], { b: true }), val = kids[i + 1] ? await convert(kids[i + 1]) : [];
+        rows.push(new X.TableRow({ children: [new X.TableCell({ children: lab.length ? lab : [new X.Paragraph('')], width: { size: 1600, type: DXA }, borders: { top: NB, bottom: NB, left: NB, right: NB } }),
+          new X.TableCell({ children: val.length ? val : [new X.Paragraph('')], width: { size: CW - 1600, type: DXA }, borders: { top: NB, bottom: NB, left: NB, right: NB } })] }));
+      }
+      return [new X.Table({ columnWidths: [1600, CW - 1600], width: { size: CW, type: DXA }, rows: rows, borders: NOB }), new X.Paragraph({ children: [], spacing: { after: 80 } })];
+    }
+    if (/\bbox\b/.test(cls)) {
+      var bk = await convert(el, { pre: true, sz: 32 });
+      return [new X.Table({ columnWidths: [CW], width: { size: CW, type: DXA }, borders: ALLB, rows: [new X.TableRow({ children: [new X.TableCell({ children: bk.length ? bk : [new X.Paragraph('-')], width: { size: CW, type: DXA }, margins: { top: 60, bottom: 60, left: 120, right: 120 } })] })] }), new X.Paragraph({ children: [] })];
+    }
+    if (/\bsig1\b/.test(cls)) return [await layoutTable(2, [[], await convert(el, { align: X.AlignmentType.CENTER })], [CW - 4300, 4300]), new X.Paragraph({ children: [] })];
+    if (/\bsig\b/.test(cls)) {
+      var cs = Array.prototype.slice.call(el.children), cont = [], ws = [];
+      for (var k = 0; k < cs.length; k++) { cont.push(await convert(cs[k], { align: X.AlignmentType.CENTER })); ws.push(Math.floor(CW / cs.length)); }
+      ws[ws.length - 1] += CW - ws.reduce(function (a, b) { return a + b; }, 0);
+      return [new X.Paragraph({ children: [], spacing: { before: 240 } }), await layoutTable(cs.length, cont, ws)];
+    }
+    if (/\bpgrid\b/.test(cls)) {
+      var figs = Array.prototype.slice.call(el.querySelectorAll('figure'));
+      for (var f = 0; f < figs.length; f += 2) {
+        var pair = [];
+        for (var q = f; q < f + 2; q++) {
+          var fg = figs[q]; if (!fg) { pair.push([]); continue; }
+          var im2 = fg.querySelector('img'), cap = fg.querySelector('figcaption'), cc = [];
+          if (im2 && im2.src) cc.push(new X.Paragraph({ children: [await imgRun(im2.src, 290)], alignment: X.AlignmentType.CENTER, spacing: IMGSP }));
+          if (cap) cc.push(new X.Paragraph({ children: [new X.TextRun({ text: cap.textContent.trim(), size: 28, font: FONT })], alignment: X.AlignmentType.CENTER, spacing: { after: 120 } }));
+          pair.push(cc);
+        }
+        out.push(await layoutTable(2, pair, [Math.floor(CW / 2), CW - Math.floor(CW / 2)]));
+      }
+      return out;
+    }
+    if (tag === 'P' || tag === 'DIV' || tag === 'SECTION' || tag === 'FIGURE' || tag === 'LI') {
+      var cs2 = getComputedStyle(el), al = cs2.textAlign === 'center' ? X.AlignmentType.CENTER : cs2.textAlign === 'right' ? X.AlignmentType.RIGHT : cs2.textAlign === 'justify' ? X.AlignmentType.THAI_DISTRIBUTE : undefined;
+      var ind = parseFloat(cs2.textIndent) > 0 ? { firstLine: 1418 } : undefined;
+      return convert(el, { align: al, indent: ind, pre: cs2.whiteSpace.indexOf('pre') === 0, spacing: tag === 'P' ? { after: 80 } : undefined, b: opt && opt.b });
+    }
+    if (tag === 'UL' || tag === 'OL') { var li = Array.prototype.slice.call(el.children); for (var n = 0; n < li.length; n++) { var lp = await convert(li[n]); if (lp[0] && tag === 'OL') lp[0] = new X.Paragraph({ children: [new X.TextRun({ text: (n + 1) + '. ' + li[n].textContent.trim(), font: FONT })] }); out = out.concat(tag === 'OL' ? [lp[0]] : lp); } return out; }
+    return convert(el, opt);
+  }
+  var children = await convert(root);
+  var doc = new X.Document({
+    creator: 'ระบบควบคุมงานก่อสร้าง', title: DOC_TITLES[kind] || 'เอกสาร',
+    styles: { default: { document: { run: { font: FONT, size: 32 }, paragraph: { spacing: { after: 0 } } } } },
+    sections: [{ properties: { page: { size: { width: 11906, height: 16838 }, margin: { top: 1418, right: 1134, bottom: 1134, left: 1701 } } }, children: children }]
+  });
+  var blob = await X.Packer.toBlob(doc);
+  var nm = { daily: 'บันทึกประจำวัน_' + key, weekly: 'รายงานสัปดาห์ที่' + key, mat: 'ขออนุมัติวัสดุ_' + ((S.submittals.filter(function (s) { return s.id === key; })[0] || {}).doc_no || key),
+    pay: 'เงินงวดที่' + ((S.installments.filter(function (i) { return i.id === key; })[0] || {}).no || key), dash: 'สรุปสถานะโครงการ_' + iso(today()) }[kind] || 'เอกสาร';
+  var fname = (S.P.name.replace(/^\(ตัวอย่าง\)\s*/, '').replace(/[\\\/:*?"<>|()]/g, '_').slice(0, 30) + '_' + nm).replace(/[\\\/:*?"<>|]/g, '_') + '.docx';
+  if (await saveBlob(fname, blob)) toast('ดาวน์โหลดไฟล์ Word แล้ว');
+}
 
