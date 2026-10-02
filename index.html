@@ -161,9 +161,12 @@ table.tbl tfoot td{font-weight:700;background:var(--head);border-top:1px solid v
 .doc figcaption{font-size:14pt;margin-top:4px}
 .doc .pb{break-before:page}
 .doc .v-ผ่าน,.doc .v-ไม่ผ่าน,.doc .v-ไม่พบข้อมูล{color:#000!important}
+.doc{position:relative}.doc .doclogo{position:absolute;top:30px;left:36px;width:2.4cm;height:2.4cm;object-fit:contain}
+.doc.haslogo>h1:first-of-type{min-height:2.4cm;display:flex;align-items:center;justify-content:center;margin:0 2.6cm 12px}
 .doc.editing{outline:2px dashed var(--pri2);outline-offset:8px;cursor:text;caret-color:#c00}.doc.editing:focus{outline-style:solid}
 .doc img.chartimg{display:block;max-width:100%;margin:8px auto}
-@media print{
+@media print{.doc .doclogo{top:0;left:0}
+
   body{background:#fff}.top,nav,.noprint,.toast{display:none!important}
   main{padding:0!important;max-width:none}.doc{border:0;padding:0;max-width:none}
   @page{size:A4;margin:15mm 14mm}

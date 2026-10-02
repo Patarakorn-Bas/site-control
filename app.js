@@ -2,7 +2,7 @@
    คุมงานก่อสร้าง (PWA) — ใช้งานคนเดียว ข้อมูลเก็บในเครื่อง (IndexedDB)
    ===================================================================== */
 'use strict';
-var APP_VERSION = '2.5.0';
+var APP_VERSION = '2.6.0';
 
 /* ---------------- IndexedDB ---------------- */
 var DB_NAME = 'sitecontrol', DB_VER = 4;
@@ -1156,12 +1156,13 @@ async function vApp() {
     '<label class="f">ผู้ให้บริการ AI</label><div class="seg" id="aiProv"><button data-prov="gemini" class="' + (gem ? 'on' : '') + '">Google Gemini (ฟรี)</button><button data-prov="claude" class="' + (gem ? '' : 'on') + '">Claude (เสียค่าใช้จ่าย)</button></div>' +
     '<div id="aiGem" class="' + (gem ? '' : 'hidden') + '"><p class="muted" style="margin-top:10px"><b>วิธีรับคีย์ฟรี:</b> เข้า <b>aistudio.google.com</b> ด้วยบัญชี Google → <b>Get API key</b> → <b>Create API key</b> → คัดลอกคีย์ (คีย์แบบใหม่ขึ้นต้นด้วย <b>AQ.</b> – คีย์เดิมที่ขึ้นต้น AIza ก็ใช้ได้) มาวางด้านล่าง • ไม่ต้องใช้บัตรเครดิต</p>' +
     '<div class="banner warn">' + ic('alert') + '<span class="grow">แบบฟรี: Google อาจนำข้อมูลที่ส่งตรวจไปใช้ปรับปรุงบริการ และจำกัดจำนวนครั้งต่อนาที/ต่อวัน – อย่าส่งเอกสารลับของทางราชการ</span></div>' +
-    '<div class="grid2">' + inp('aiGKey', 'Gemini API key (AQ.… หรือ AIza…)' + (ai.gkey ? ' – บันทึกไว้แล้ว: ' + esc(mask(ai.gkey)) : ''), '', 'text', 'autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true" data-form-type="other" placeholder="' + (ai.gkey ? 'เว้นว่างถ้าไม่เปลี่ยนคีย์' : 'วางคีย์ที่คัดลอกจาก AI Studio') + '"') + inp('aiGModel', 'โมเดล (เว้นว่าง = เลือกอัตโนมัติ)', ai.gmodel) + '</div></div>' +
+    '<div class="grid2">' + inp('aiGKey', 'Gemini API key (AQ.… หรือ AIza…)' + (ai.gkey ? ' – บันทึกไว้แล้ว: ' + esc(mask(ai.gkey)) : ''), '', 'text', 'autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true" data-form-type="other" placeholder="' + (ai.gkey ? 'เว้นว่างถ้าไม่เปลี่ยนคีย์' : 'วางคีย์ที่คัดลอกจาก AI Studio') + '"') + '<div><label class="f" for="aiGModel">รุ่นโมเดล Gemini</label><select id="aiGModel" class="i">' + geminiOpts(ai) + '</select></div></div>' +
+    '<p class="muted">' + (ai.gmodels && ai.gmodels.length ? 'พบ ' + ai.gmodels.length + ' รุ่นในบัญชีของคุณ • แนะนำ Flash (แม่นยำดีและฟรี) ถ้าเกินโควตาบ่อยให้เลือก Flash-Lite • รุ่น Pro แม่นที่สุดแต่อาจต้องเปิด billing' : 'กด <b>ทดสอบการเชื่อมต่อ / โหลดรายชื่อรุ่น</b> เพื่อดึงรายชื่อรุ่นที่บัญชีของคุณใช้ได้') + '</p></div>' +
     '<div id="aiCla" class="' + (gem ? 'hidden' : '') + '"><p class="muted" style="margin-top:10px">console.anthropic.com → เติมเครดิต → API Keys • มีค่าใช้จ่ายตามการใช้งาน</p>' +
-    '<div class="grid2">' + inp('aiKey', 'Claude API key (sk-ant-…)' + (ai.key ? ' – บันทึกไว้แล้ว: ' + esc(mask(ai.key)) : ''), '', 'text', 'autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true" data-form-type="other" placeholder="' + (ai.key ? 'เว้นว่างถ้าไม่เปลี่ยนคีย์' : 'sk-ant-…') + '"') + inp('aiModel', 'โมเดล', ai.model || AI_DEFAULT_MODEL) + '</div></div>' +
+    '<div class="grid2">' + inp('aiKey', 'Claude API key (sk-ant-…)' + (ai.key ? ' – บันทึกไว้แล้ว: ' + esc(mask(ai.key)) : ''), '', 'text', 'autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true" data-form-type="other" placeholder="' + (ai.key ? 'เว้นว่างถ้าไม่เปลี่ยนคีย์' : 'sk-ant-…') + '"') + (ai.cmodels && ai.cmodels.length ? '<div><label class="f" for="aiModel">รุ่นโมเดล Claude</label><select id="aiModel" class="i">' + opts(ai.cmodels.indexOf(ai.model) >= 0 ? ai.cmodels : [ai.model].concat(ai.cmodels), ai.model) + '</select></div>' : inp('aiModel', 'รุ่นโมเดล Claude', ai.model || AI_DEFAULT_MODEL)) + '</div></div>' +
     '<div class="grid2">' + inp('aiLimit', 'จำกัดจำนวนครั้งต่อวัน (ครั้งที่ผิดพลาดนับด้วย)', ai.limit, 'number', 'min="1"') + '</div>' +
     '<p class="muted">ใช้วันนี้ ' + used + ' / ' + ai.limit + ' ครั้ง • สถานะ: ' + (aiReady(ai) ? '<span class="ok-t">พร้อมใช้ – ' + esc(aiName(ai)) + '</span>' : 'ยังไม่ได้ตั้งค่า') + ' • คีย์เก็บเฉพาะในเครื่องนี้ ไม่อยู่ในไฟล์สำรองหรือการซิงก์</p>' +
-    '<div class="row"><button class="btn" data-act="aiSave">บันทึก</button><button class="btn sec" data-act="aiTest" ' + (aiReady(ai) ? '' : 'disabled') + '>ทดสอบการเชื่อมต่อ</button>' + (ai.key || ai.gkey ? '<button class="btn ghost bad-t" data-act="aiClear">ลบ API key</button>' : '') + '</div></div>';
+    '<div class="row"><button class="btn" data-act="aiSave">บันทึก</button><button class="btn sec" data-act="aiTest" ' + (aiReady(ai) ? '' : 'disabled') + '>ทดสอบการเชื่อมต่อ / โหลดรายชื่อรุ่น</button><button class="btn sec" data-act="aiSelf" ' + (aiReady(ai) ? '' : 'disabled') + '>' + ic('spark') + 'ทดสอบการตรวจจริง (เอกสารตัวอย่าง)</button>' + (S.aiDebug ? '<button class="btn ghost" data-act="aiDebug">ข้อมูลการเรียก AI ล่าสุด</button>' : '') + (ai.key || ai.gkey ? '<button class="btn ghost bad-t" data-act="aiClear">ลบ API key</button>' : '') + '</div></div>';
   return pageHead('ตั้งค่าและสำรองข้อมูล', 'การแสดงผล การสำรอง/กู้คืน AI และการติดตั้งแอป', '') + '<div class="card"><h2>การแสดงผล</h2><div class="seg" id="themeSeg">' + [['auto', 'ตามเครื่อง'], ['light', 'สว่าง'], ['dark', 'มืด']].map(function (x) {
       return '<button data-theme="' + x[0] + '" class="' + (theme === x[0] ? 'on' : '') + '">' + x[1] + '</button>'; }).join('') + '</div></div>' +
     '<div class="card"><h2>สำรองและกู้คืนข้อมูล</h2><p>ข้อมูลทั้งหมดเก็บในเครื่องนี้เท่านั้น (ไม่ได้ส่งขึ้นอินเทอร์เน็ต) ถ้าล้างข้อมูลเบราว์เซอร์ เปลี่ยนเครื่อง หรือเครื่องเสีย ข้อมูลจะหาย – <b>ควรสำรองสัปดาห์ละครั้ง</b> แล้วเก็บไฟล์ไว้ใน Google Drive/OneDrive</p>' +
@@ -1169,7 +1170,7 @@ async function vApp() {
     '<div class="row"><button class="btn acc" data-act="backup">สำรองข้อมูลทั้งหมด (รวมรูป)</button><button class="btn sec" data-act="backupLite">สำรองแบบไม่รวมรูป</button>' +
     '<label class="btn sec" style="display:inline-block">กู้คืนจากไฟล์<input type="file" class="hidden" id="restoreFile" accept=".json,application/json"></label></div>' +
     '<p class="muted">ย้ายไปเครื่องใหม่: สำรองในเครื่องเดิม → เปิดแอปในเครื่องใหม่ → กู้คืนจากไฟล์</p></div>' +
-    (await syncCard()) + aiHtml + '<div class="card"><h2>พื้นที่จัดเก็บ</h2><p>' + (est ? 'ใช้ไป ' + (est.usage / 1048576).toFixed(1) + ' MB จากที่ใช้ได้ประมาณ ' + (est.quota / 1073741824).toFixed(1) + ' GB' : 'ไม่ทราบขนาด') + '</p>' +
+    (await syncCard()) + aiHtml + logoCard() + '<div class="card"><h2>พื้นที่จัดเก็บ</h2><p>' + (est ? 'ใช้ไป ' + (est.usage / 1048576).toFixed(1) + ' MB จากที่ใช้ได้ประมาณ ' + (est.quota / 1073741824).toFixed(1) + ' GB' : 'ไม่ทราบขนาด') + '</p>' +
     '<p class="muted">การป้องกันการลบอัตโนมัติ: ' + (persisted ? '<span class="ok-t">✓ เปิดแล้ว</span>' : 'ยังไม่เปิด <button class="btn sm sec" data-act="persist">ขอเปิด</button>') + ' – ช่วยไม่ให้เบราว์เซอร์ลบข้อมูลเองเมื่อพื้นที่เครื่องเหลือน้อย</p></div>' +
     '<div class="card"><h2>ติดตั้งเป็นแอป</h2>' + (standalone ? '<p class="ok-t">✓ กำลังใช้งานแบบแอปที่ติดตั้งแล้ว</p>' :
       '<button class="btn" data-act="install">' + ic('download') + 'ติดตั้งลงเครื่องนี้</button>' +
@@ -1373,11 +1374,27 @@ document.addEventListener('click', async function (e) {
       cfg.provider = prov;
       if (gk && gk.indexOf('••') !== 0) { if (!geminiKeyOk(gk)) throw new Error('Gemini API key ไม่ถูกต้อง – คีย์ต้องขึ้นต้นด้วย AQ. (แบบใหม่) หรือ AIza (แบบเดิม) และคัดลอกให้ครบทุกตัวอักษร'); cfg.gkey = gk; cfg.gmodel = ''; }
       if (ck && ck.indexOf('••') !== 0) { if (!/^sk-ant-/.test(ck)) throw new Error('Claude API key ต้องขึ้นต้นด้วย sk-ant-'); cfg.key = ck; }
-      var gm = $('#aiGModel').value.trim(); if (gm !== (cfg.gmodel || '')) cfg.gmodel = gm;
-      cfg.model = $('#aiModel').value.trim() || AI_DEFAULT_MODEL; cfg.limit = Math.max(1, Math.round(num($('#aiLimit').value) || 30));
+      if (!(gk && gk.indexOf('••') !== 0)) cfg.gmodel = $('#aiGModel').value;
+      cfg.model = String($('#aiModel').value).trim() || AI_DEFAULT_MODEL; cfg.limit = Math.max(1, Math.round(num($('#aiLimit').value) || 30));
       await meta('ai', cfg); toast('บันทึกการตั้งค่า AI แล้ว'); render();
     }
     else if (a === 'aiTest') { var c2 = await aiCfg(); if (aiSandboxed()) throw new Error('หน้าทดลองนี้ไม่อนุญาตให้เชื่อมต่อภายนอก'); el.disabled = true; try { toast(await aiTest(c2), false, 4500); render(); } finally { el.disabled = false; } }
+    else if (a === 'aiSelf') {
+      if (aiSandboxed()) throw new Error('หน้าทดลองนี้ไม่อนุญาตให้เชื่อมต่อภายนอก');
+      var cS = await aiCfg();
+      if (!(await confirmBox('ส่งเอกสารตัวอย่าง (ใบรับรองเหล็ก 1 หน้า) ให้ ' + aiName(cS) + ' ตรวจ 5 ข้อที่รู้คำตอบอยู่แล้ว เพื่อดูว่ารุ่นนี้ตรวจได้ถูกต้องหรือไม่? (นับเป็นการใช้ AI 1 ครั้ง)', 'เริ่มทดสอบ'))) return;
+      var mb = modal('<h2>ทดสอบการตรวจด้วย AI</h2><p><span class="spin"></span> กำลังส่งเอกสารตัวอย่างให้ ' + esc(aiName(cS)) + ' … (20–60 วินาที)</p>', null, null, true);
+      try {
+        var rs = await aiSelfTest(), nOk = rs.items.filter(function (x) { return x.ok; }).length;
+        mb.querySelector('.modal').innerHTML = '<h2>ผลทดสอบการตรวจด้วย AI</h2><div class="kpis">' + kpi('รุ่นที่ใช้', esc(rs.model)) + kpi('ตอบถูก', nOk + ' / ' + rs.items.length + ' ข้อ', nOk === rs.items.length ? 'ใช้งานได้ดี' : nOk >= 4 ? 'ใช้ได้ – ควรตรวจทานทุกครั้ง' : 'ไม่แนะนำ – ลองเลือกรุ่นอื่น', nOk >= 4 ? 'ok-t' : 'bad-t') + kpi('เวลา', (rs.ms / 1000).toFixed(1) + ' วินาที') + '</div>' +
+          '<div class="tw" style="margin-top:12px"><table class="tbl"><thead><tr><th>ข้อกำหนด</th><th>คำตอบที่ถูก</th><th>AI ตอบ</th><th>สิ่งที่ AI พบ</th><th></th></tr></thead><tbody>' + rs.items.map(function (x) {
+            return '<tr><td>' + esc(x.req) + '</td><td class="v-' + esc(x.expect) + '">' + esc(x.expect) + '</td><td class="v-' + esc(x.verdict) + '">' + esc(x.verdict) + '</td><td>' + esc(x.found) + '</td><td>' + (x.ok ? '<span class="ok-t">✓</span>' : '<span class="bad-t">✗</span>') + '</td></tr>'; }).join('') + '</tbody></table></div>' +
+          '<p class="muted">เอกสารตัวอย่างเป็นใบรับรองเหล็ก SD40 กำลังคราก 4,250 กก./ตร.ซม. ผลทดสอบจากห้องปฏิบัติการของบริษัท (ไม่ใช่ของรัฐ) • ข้อ 5 เป็นข้อกำหนดของท่อ PVC จึงควรตอบ "ไม่เกี่ยวข้อง"</p><div class="mfoot"><button class="btn" data-x>ปิด</button></div>';
+      } catch (er) { mb.querySelector('.modal').innerHTML = '<h2>ทดสอบไม่สำเร็จ</h2><p class="bad-t">' + esc(er.message) + '</p>' + aiDebugHtml() + '<div class="mfoot"><button class="btn" data-x>ปิด</button></div>'; }
+    }
+    else if (a === 'aiDebug') modal('<h2>ข้อมูลการเรียก AI ล่าสุด</h2>' + aiDebugHtml(), null, null, true);
+    else if (a === 'logoOn' || a === 'logoOff') { var lc = (await meta('logo')) || {}; lc.on = a === 'logoOn'; await meta('logo', lc); S.logoCfg = lc; render(); }
+    else if (a === 'logoReset') { var lr = (await meta('logo')) || {}; lr.data = ''; lr.on = true; await meta('logo', lr); S.logoCfg = lr; toast('ใช้โลโก้ กฟภ. (ค่าเริ่มต้น)'); render(); }
     else if (a === 'aiClear') { if (await confirmBox('ลบ API key ทั้งหมดออกจากเครื่องนี้?', 'ลบ')) { var c3 = await aiCfg(); c3.key = ''; c3.gkey = ''; c3.gmodel = ''; await meta('ai', c3); render(); } }
     else if (a === 'aiRun') {
       var sa = S.submittals.filter(function (x) { return x.id === S.route[3]; })[0];
@@ -1433,6 +1450,13 @@ document.addEventListener('change', async function (e) {
       var key = t.dataset.chk || t.dataset.cnote, c = s.checks[key] = s.checks[key] || {};
       if (t.dataset.chk) { c.v = t.value; t.className = 'i v-' + t.value; } else c.note = t.value.trim();
       s.updated = new Date().toISOString(); await DB.put('submittals', s); return;
+    }
+    if (t.id === 'logoFile' && t.files[0]) {
+      var lf = t.files[0], lu = URL.createObjectURL(lf), li = new Image();
+      await new Promise(function (ok, no) { li.onload = ok; li.onerror = function () { no(new Error('อ่านไฟล์รูปโลโก้ไม่ได้')); }; li.src = lu; });
+      var sc = Math.min(1, 400 / Math.max(li.naturalWidth || 400, li.naturalHeight || 400)), cv = document.createElement('canvas');
+      cv.width = Math.round((li.naturalWidth || 400) * sc); cv.height = Math.round((li.naturalHeight || 400) * sc); cv.getContext('2d').drawImage(li, 0, 0, cv.width, cv.height); URL.revokeObjectURL(lu);
+      var lg = (await meta('logo')) || {}; lg.data = cv.toDataURL('image/png'); lg.on = true; await meta('logo', lg); S.logoCfg = lg; t.value = ''; toast('เปลี่ยนโลโก้แล้ว'); render(); return;
     }
     if (t.id === 'restoreFile' && t.files[0]) { await doRestore(t.files[0]); t.value = ''; return; }
   } catch (err) { toast(err.message, true); }
@@ -1560,9 +1584,33 @@ function registerSW() {
   var tries = 0; while (!window.Chart && tries++ < 20) await new Promise(function (r) { setTimeout(r, 50); });
   if (window.Chart) { Chart.defaults.font.family = "'THSarabunPSK','TH SarabunPSK','TH Sarabun PSK',sans-serif"; Chart.defaults.font.size = 16; }
   try { if (document.fonts && document.fonts.load) await Promise.race([document.fonts.load("20px THSarabunPSK"), new Promise(function (r) { setTimeout(r, 1500); })]); } catch (e) {}
+  S.logoCfg = (await meta('logo')) || {};
   await render();
   syncBadge(); outboxAll().then(function (a) { SYNC.pending = a.length; syncBadge(); }).catch(function () {}); scheduleSync(1200);
 })();
+
+function geminiOpts(ai) {
+  var list = (ai.gmodels || []).slice(), rank = function (id) { return /pro/.test(id) ? 2 : /lite/.test(id) ? 1 : 0; };
+  if (ai.gmodel && list.indexOf(ai.gmodel) < 0) list.unshift(ai.gmodel);
+  list.sort(function (a, b) { return rank(a) - rank(b) || (a < b ? 1 : -1); });
+  return '<option value="">อัตโนมัติ' + (ai.gauto ? ' – ' + esc(ai.gauto) : ' (แนะนำ)') + '</option>' +
+    list.map(function (id) { return '<option value="' + esc(id) + '"' + (id === ai.gmodel ? ' selected' : '') + '>' + esc(id) + ' – ' + esc(geminiTag(id)) + '</option>'; }).join('');
+}
+function aiDebugHtml() {
+  var d = S.aiDebug; if (!d) return '<p class="muted">ยังไม่มีการเรียก AI ในรอบนี้</p>';
+  return '<div class="tw"><table class="tbl"><tbody>' + [['ผู้ให้บริการ', d.provider], ['รุ่น', d.model], ['เวลา', d.at ? d.at.replace('T', ' ').slice(0, 19) : '-'], ['สถานะ HTTP', d.status || '-'],
+    ['ใช้เวลา', d.ms ? (d.ms / 1000).toFixed(1) + ' วินาที' : '-'], ['สาเหตุที่จบคำตอบ', d.finish || '-'], ['ใช้รูปแบบบังคับ JSON', d.schemaFallback ? 'ไม่ (รุ่นนี้ไม่รองรับ – ใช้แบบปกติแทน)' : 'ใช่']].map(function (r) { return '<tr><th style="width:30%">' + r[0] + '</th><td>' + esc(r[1]) + '</td></tr>'; }).join('') +
+    '</tbody></table></div>' + (d.raw ? '<label class="f">คำตอบดิบ (ส่วนต้น)</label><pre style="white-space:pre-wrap;max-height:240px;overflow:auto;background:var(--chip);padding:8px;border-radius:6px;font-size:13px">' + esc(d.raw) + '</pre>' : '');
+}
+function logoSrc() { var c = S.logoCfg || {}; if (c.on === false) return ''; return c.data || window.ORG_LOGO || 'icons/org-logo.png'; }
+function logoCard() {
+  var c = S.logoCfg || {}, on = c.on !== false, src = c.data || window.ORG_LOGO || 'icons/org-logo.png';
+  return '<div class="card"><h2>โลโก้หน่วยงานบนเอกสาร</h2><div class="row" style="align-items:flex-start;gap:18px"><img src="' + esc(src) + '" alt="โลโก้" style="width:96px;height:96px;object-fit:contain;' + (on ? '' : 'opacity:.35') + '">' +
+    '<div class="grow"><p>แสดงที่มุมซ้ายบนของเอกสารที่พิมพ์ / PDF / Word ทุกฉบับ ' + (c.data ? '(โลโก้ที่อัปโหลดเอง)' : '(ค่าเริ่มต้น: การไฟฟ้าส่วนภูมิภาค)') + '</p>' +
+    '<div class="seg"><button data-act="logoOn" class="' + (on ? 'on' : '') + '">แสดงโลโก้</button><button data-act="logoOff" class="' + (on ? '' : 'on') + '">ไม่แสดง</button></div>' +
+    '<div class="row" style="margin-top:10px"><label class="btn sec">' + ic('upload') + 'ใช้โลโก้อื่น<input type="file" class="hidden" id="logoFile" accept="image/png,image/jpeg,image/webp,image/svg+xml"></label>' + (c.data ? '<button class="btn ghost" data-act="logoReset">กลับไปใช้โลโก้ กฟภ.</button>' : '') + '</div>' +
+    '<p class="muted">ตั้งค่าแยกแต่ละเครื่อง (คอม / iPad)</p></div></div></div>';
+}
 
 /* ---------------- CONTRACT & FINANCE ---------------- */
 var EOT_CAUSE = ['ผู้ว่าจ้าง', 'เหตุสุดวิสัย', 'ผู้รับจ้าง', 'อื่นๆ'];
@@ -1961,9 +2009,15 @@ async function exportV4() {
 var AI_DEFAULT_MODEL = 'claude-sonnet-5';
 var AI_URL = 'https://api.anthropic.com/v1';
 var GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta';
-async function aiCfg() { return Object.assign({ provider: 'gemini', key: '', model: AI_DEFAULT_MODEL, gkey: '', gmodel: '', limit: 30, used: {} }, (await meta('ai')) || {}); }
+async function aiCfg() { return Object.assign({ provider: 'gemini', key: '', model: AI_DEFAULT_MODEL, gkey: '', gmodel: '', gauto: '', gmodels: [], cmodels: [], limit: 30, used: {} }, (await meta('ai')) || {}); }
+function geminiUsable(id) { return /^gemini-/.test(id) && !/image|tts|audio|live|embedding|aqa|robotics|computer-use|native/.test(id); }
+function geminiTag(id) {
+  var t = /pro/.test(id) ? 'Pro – แม่นที่สุด แต่อาจต้องเปิด billing' : /lite/.test(id) ? 'Flash-Lite – เร็ว ใช้ฟรีได้มากครั้ง' : /flash/.test(id) ? 'Flash – ฟรี แนะนำ' : 'อื่นๆ';
+  return t + (/preview|exp/.test(id) ? ' (รุ่นทดลอง)' : '');
+}
+function geminiEff(c) { return c.gmodel || c.gauto || ''; }
 function aiReady(c) { return c.provider === 'claude' ? !!c.key : !!c.gkey; }
-function aiName(c) { return c.provider === 'claude' ? 'Claude (' + (c.model || AI_DEFAULT_MODEL) + ')' : 'Gemini (' + (c.gmodel || 'เลือกอัตโนมัติ') + ')'; }
+function aiName(c) { return c.provider === 'claude' ? 'Claude (' + (c.model || AI_DEFAULT_MODEL) + ')' : 'Gemini (' + (geminiEff(c) || 'เลือกอัตโนมัติ') + ')'; }
 function aiSandboxed() { return /claudeusercontent|claude\.ai|claude\.site/.test(location.host) || location.protocol === 'file:'; }
 function aiHeaders(key) { return { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true', 'content-type': 'application/json' }; }
 // เลือกรุ่น Gemini: รุ่น Flash ใหม่ที่สุดที่เป็นรุ่นเสถียร (ไม่ใช่ lite/preview/exp) ถ้าไม่มีจึงใช้รุ่นอื่น
@@ -1988,22 +2042,25 @@ function geminiAuthError(status, text) {
   return '';
 }
 async function geminiModels(key) {
-  var r = await gfetch(GEMINI_URL + '/models?pageSize=200', {}, key).catch(function () { throw new Error('เชื่อมต่อ Gemini ไม่ได้ – ตรวจอินเทอร์เน็ต'); });
+  var r = await gfetch(GEMINI_URL + '/models?pageSize=1000', {}, key).catch(function () { throw new Error('เชื่อมต่อ Gemini ไม่ได้ – ตรวจอินเทอร์เน็ต'); });
   if (!r.ok) { var et = await r.text(); throw new Error(geminiAuthError(r.status, et) || ('เชื่อมต่อ Gemini ไม่ได้ (' + r.status + ')')); }
   return ((await r.json()).models || []).filter(function (m) { return (m.supportedGenerationMethods || []).indexOf('generateContent') >= 0; })
     .map(function (m) { return String(m.name).replace(/^models\//, ''); });
 }
 async function aiTest(c) {
   if (c.provider !== 'claude') {
-    var ids = await geminiModels(c.gkey), m = c.gmodel && ids.indexOf(c.gmodel) >= 0 ? c.gmodel : pickGemini(ids);
-    if (!m) throw new Error('คีย์ใช้ได้ แต่ไม่พบโมเดล Gemini Flash ในบัญชีนี้');
-    c.gmodel = m; await meta('ai', c); return 'เชื่อมต่อ Gemini สำเร็จ • ใช้โมเดล ' + m;
+    var ids = await geminiModels(c.gkey), auto = pickGemini(ids);
+    c.gmodels = ids.filter(geminiUsable).sort(); c.gauto = auto;
+    if (c.gmodel && ids.indexOf(c.gmodel) < 0) c.gmodel = '';
+    if (!geminiEff(c)) throw new Error('คีย์ใช้ได้ แต่ไม่พบโมเดล Gemini ที่ใช้ตรวจเอกสารได้ในบัญชีนี้');
+    await meta('ai', c); return 'เชื่อมต่อ Gemini สำเร็จ • พบ ' + c.gmodels.length + ' รุ่น • ใช้ ' + geminiEff(c);
   }
   var r = await fetch(AI_URL + '/models?limit=1000', { headers: aiHeaders(c.key) }).catch(function () { throw new Error('เชื่อมต่อไม่ได้ – ตรวจอินเทอร์เน็ต'); });
   if (r.status === 401) throw new Error('API key ไม่ถูกต้องหรือถูกยกเลิก');
   if (!r.ok) throw new Error('เชื่อมต่อไม่ได้ (' + r.status + ')');
   var ids2 = ((await r.json()).data || []).map(function (x) { return x.id; });
-  if (ids2.length && ids2.indexOf(c.model) < 0) throw new Error('คีย์ใช้ได้ แต่ไม่พบโมเดล ' + c.model + ' – ใช้ได้: ' + ids2.slice(0, 5).join(', '));
+  c.cmodels = ids2; await meta('ai', c);
+  if (ids2.length && ids2.indexOf(c.model) < 0) throw new Error('คีย์ใช้ได้ แต่ไม่พบโมเดล ' + c.model + ' – เลือกรุ่นจากรายการในตั้งค่า');
   return 'เชื่อมต่อ Claude สำเร็จ • โมเดล ' + c.model;
 }
 var AI_SYSTEM = [
@@ -2022,11 +2079,76 @@ function parseAiJson(text) {
   if (a < 0 || b <= a) throw new Error('AI ตอบกลับในรูปแบบที่อ่านไม่ได้ กรุณาลองใหม่');
   try { return JSON.parse(t.slice(a, b + 1)); } catch (e) { throw new Error('AI ตอบกลับในรูปแบบที่อ่านไม่ได้ กรุณาลองใหม่'); }
 }
-async function aiCheck(s) {
-  var cfg = await aiCfg(), day = iso(today()), used = num(cfg.used[day]), gem = cfg.provider !== 'claude';
+var AI_SCHEMA = { type: 'OBJECT', properties: {
+  items: { type: 'ARRAY', items: { type: 'OBJECT', properties: { cl: { type: 'STRING' }, mat: { type: 'STRING' }, found: { type: 'STRING' },
+    verdict: { type: 'STRING', enum: ['ผ่าน', 'ไม่ผ่าน', 'ไม่พบข้อมูล', 'ไม่เกี่ยวข้อง'] } }, required: ['cl', 'found', 'verdict'] } },
+  summary: { type: 'STRING' } }, required: ['items', 'summary'] };
+// เรียก AI หนึ่งครั้ง (ใช้ทั้งการตรวจจริงและการทดสอบ) • datas = [{label, mime, data(base64)}]
+async function aiCall(cfg, datas, crit, info) {
+  var gem = cfg.provider !== 'claude', t0 = Date.now(), model = gem ? geminiEff(cfg) : (cfg.model || AI_DEFAULT_MODEL);
+  if (gem && !model) { await aiTest(cfg); model = geminiEff(cfg); }
+  var ask = ['วัสดุที่เสนอ: ' + (info.material || '-') + ' | ยี่ห้อ/รุ่น: ' + (info.brand || '-') + ' | หมวด: ' + (info.section || '-'),
+    'อ่านเอกสาร/ภาพทุกไฟล์ให้ละเอียด (รวมตาราง ตัวเลข ตราประทับ เลข มอก.) แล้วตัดสินข้อกำหนดทีละข้อ',
+    'ข้อกำหนดที่ต้องตรวจ (JSON): ' + JSON.stringify(crit.map(function (c) { return { cl: c.cl, mat: c.mat, kind: c.kind, req: c.req }; })),
+    'ตอบเป็น JSON รูปแบบ: {"items":[{"cl":"ข้อ","mat":"วัสดุ","found":"สิ่งที่พบ","verdict":"ผ่าน|ไม่ผ่าน|ไม่พบข้อมูล|ไม่เกี่ยวข้อง"}],"summary":"สรุป 2-4 ประโยค ระบุเอกสารที่ต้องขอเพิ่ม (ถ้ามี)"} โดยมี items ครบทุกข้อตามลำดับ'].join('\n');
+  var dbg = S.aiDebug = { provider: gem ? 'Gemini' : 'Claude', model: model, at: new Date().toISOString() };
+  var ctl = new AbortController(), timer = setTimeout(function () { ctl.abort(); }, 240000);
+  var send = async function (useSchema) {
+    var url, body, fo;
+    if (gem) {
+      var parts = []; datas.forEach(function (d) { parts.push({ text: d.label }); parts.push({ inline_data: { mime_type: d.mime, data: d.data } }); }); parts.push({ text: ask });
+      var gc = { temperature: 0.1, responseMimeType: 'application/json', maxOutputTokens: 32768 }; if (useSchema) gc.responseSchema = AI_SCHEMA;
+      url = GEMINI_URL + '/models/' + encodeURIComponent(model) + ':generateContent';
+      body = { systemInstruction: { parts: [{ text: AI_SYSTEM }] }, contents: [{ role: 'user', parts: parts }], generationConfig: gc };
+      fo = { method: 'POST', headers: { 'content-type': 'application/json' }, signal: ctl.signal, body: JSON.stringify(body) };
+      return gfetch(url, fo, cfg.gkey);
+    }
+    var content = []; datas.forEach(function (d) { var src = { type: 'base64', media_type: d.mime, data: d.data }; content.push({ type: 'text', text: d.label }); content.push(d.mime === 'application/pdf' ? { type: 'document', source: src } : { type: 'image', source: src }); });
+    content.push({ type: 'text', text: ask });
+    return fetch(AI_URL + '/messages', { method: 'POST', headers: aiHeaders(cfg.key), signal: ctl.signal, body: JSON.stringify({ model: model, max_tokens: 8000, system: AI_SYSTEM, messages: [{ role: 'user', content: content }] }) });
+  };
+  var res, txt;
+  try {
+    res = await send(gem); txt = await res.text();
+    if (gem && res.status === 400 && /schema|responseSchema|response_schema|Unknown name|INVALID_ARGUMENT/i.test(txt)) { dbg.schemaFallback = true; res = await send(false); txt = await res.text(); }
+  } catch (e) { dbg.error = e.name; throw new Error(e.name === 'AbortError' ? 'AI ใช้เวลานานเกินไป ลองลดจำนวนไฟล์แล้วตรวจใหม่' : 'เชื่อมต่อ AI ไม่ได้ – ตรวจอินเทอร์เน็ต'); }
+  finally { clearTimeout(timer); dbg.ms = Date.now() - t0; }
+  dbg.status = res.status; dbg.raw = String(txt).slice(0, 1500);
+  if (!res.ok) {
+    var msg = txt; try { var ej = JSON.parse(txt); msg = (ej.error && ej.error.message) || msg; } catch (e) {}
+    if (gem && res.status !== 429 && geminiAuthError(res.status, txt) && res.status !== 400) throw new Error(geminiAuthError(res.status, txt));
+    if (res.status === 429) throw new Error(gem ? 'เกินโควตาฟรีของรุ่น ' + model + ' (จำกัดต่อนาที/ต่อวัน) – รอสักครู่ หรือเลือกรุ่น Flash-Lite ในตั้งค่า' : 'AI ไม่ว่างหรือเกินโควตา (429) – ลองใหม่ภายหลัง');
+    if (gem && res.status === 404) throw new Error('ไม่พบรุ่น ' + model + ' ในบัญชีนี้ – กด "โหลดรายชื่อรุ่น" ในตั้งค่าแล้วเลือกใหม่');
+    if (gem && res.status === 400 && /API key|API_KEY/i.test(txt)) throw new Error(geminiAuthError(res.status, txt));
+    throw new Error('AI ตอบกลับผิดพลาด (' + res.status + '): ' + String(msg).slice(0, 180));
+  }
+  var data = JSON.parse(txt), text, usage = null;
+  if (gem) {
+    var cand = (data.candidates || [])[0]; dbg.finish = cand && cand.finishReason;
+    if (!cand) throw new Error('Gemini ปฏิเสธการตรวจ' + (data.promptFeedback && data.promptFeedback.blockReason ? ' (' + data.promptFeedback.blockReason + ')' : '') + ' – ลองใหม่หรือเปลี่ยนไฟล์');
+    text = ((cand.content || {}).parts || []).filter(function (p) { return !p.thought; }).map(function (p) { return p.text || ''; }).join('');
+    if (cand.finishReason === 'MAX_TOKENS') throw new Error('คำตอบของ AI ยาวเกินกำหนดจนถูกตัด – ลดจำนวนไฟล์/ข้อกำหนด หรือเลือกรุ่นอื่นในตั้งค่า');
+    if (!text) throw new Error('Gemini ไม่ส่งผลตรวจ (' + (cand.finishReason || '?') + ') – ลองใหม่หรือเลือกรุ่นอื่น');
+    usage = data.usageMetadata || null;
+  } else { text = (data.content || []).filter(function (b) { return b.type === 'text'; }).map(function (b) { return b.text; }).join(''); usage = data.usage || null; dbg.finish = data.stop_reason; if (data.stop_reason === 'max_tokens') throw new Error('คำตอบของ AI ยาวเกินกำหนดจนถูกตัด – ลดจำนวนไฟล์/ข้อกำหนด'); }
+  var out = parseAiJson(text), V = ['ผ่าน', 'ไม่ผ่าน', 'ไม่พบข้อมูล', 'ไม่เกี่ยวข้อง'];
+  var items = crit.map(function (c, i) {
+    var m = (out.items || []).filter(function (x) { return String(x.cl) === String(c.cl) && (!x.mat || x.mat === c.mat); })[0] || (out.items || [])[i] || {};
+    return { key: c.key, cl: c.cl, mat: c.mat, req: c.req, found: String(m.found || 'AI ไม่ได้ตอบข้อนี้').slice(0, 300), verdict: V.indexOf(m.verdict) >= 0 ? m.verdict : 'ไม่พบข้อมูล' };
+  });
+  var rel = items.filter(function (x) { return x.verdict !== 'ไม่เกี่ยวข้อง'; });
+  var overall = !rel.length ? 'more_docs' : rel.some(function (x) { return x.verdict === 'ไม่ผ่าน'; }) ? 'rejected' : rel.some(function (x) { return x.verdict === 'ไม่พบข้อมูล'; }) ? 'more_docs' : 'approved';
+  return { items: items, summary: String(out.summary || '').slice(0, 1500), overall: overall, model: (gem ? 'Gemini ' : 'Claude ') + model, at: new Date().toISOString(), usage: usage, ms: dbg.ms };
+}
+async function aiGuard(cfg) {
   if (aiSandboxed()) throw new Error('AI ใช้ได้เมื่อเปิดแอปจาก GitHub Pages (หน้าทดลองใน claude.ai ไม่อนุญาตให้เชื่อมต่อภายนอก)');
   if (!aiReady(cfg)) throw new Error('ยังไม่ได้ใส่ API key – ไปที่ ตั้งค่าแอป → AI ตรวจสเปก');
+  var day = iso(today()), used = num(cfg.used[day]);
   if (used >= num(cfg.limit)) throw new Error('ใช้ AI ครบจำนวนที่ตั้งไว้ของวันนี้แล้ว (' + cfg.limit + ' ครั้ง) – ปรับได้ที่ตั้งค่าแอป');
+  cfg.used = {}; cfg.used[day] = used + 1; await meta('ai', cfg);
+}
+async function aiCheck(s) {
+  var cfg = await aiCfg(), gem = cfg.provider !== 'claude';
   var crit = criteriaOf(s).slice(0, 60);
   if (!crit.length) throw new Error('กำหนดเกณฑ์ตรวจก่อน (เลือกหมวดหรือพิมพ์ข้อกำหนด)');
   var files = filesOf('submittal', s.id).slice(0, 8);
@@ -2034,51 +2156,36 @@ async function aiCheck(s) {
   for (var q = 0; q < files.length; q++) if (!files[q].blob && typeof ensureBlob === 'function') await ensureBlob(files[q]);
   var total = files.reduce(function (a, f) { return a + (f.size || (f.blob ? f.blob.size : 0)); }, 0), cap = gem ? 15 : 24;
   if (total > cap * 1024 * 1024) throw new Error('ไฟล์แนบรวมใหญ่เกิน ' + cap + ' MB – ลดจำนวนไฟล์หรือแยกเฉพาะหน้าที่เกี่ยวข้อง');
-  var intro = [], datas = [];
-  for (var i = 0; i < files.length; i++) { intro.push('ไฟล์ ' + (i + 1) + ': ' + files[i].name + (files[i].caption ? ' (' + files[i].caption + ')' : '')); datas.push({ mime: files[i].mime, data: await b64FromBlob(files[i].blob) }); }
-  var ask = ['วัสดุที่เสนอ: ' + (s.material || '-') + ' | ยี่ห้อ/รุ่น: ' + (s.brand || '-') + ' | หมวด: ' + (s.spec_sec ? specName(s.spec_sec) : 'ข้อกำหนดเฉพาะ'),
-    'ข้อกำหนดที่ต้องตรวจ (JSON): ' + JSON.stringify(crit.map(function (c) { return { cl: c.cl, mat: c.mat, kind: c.kind, req: c.req }; })),
-    'ตอบเป็น JSON รูปแบบ: {"items":[{"cl":"ข้อ","mat":"วัสดุ","found":"สิ่งที่พบ","verdict":"ผ่าน|ไม่ผ่าน|ไม่พบข้อมูล|ไม่เกี่ยวข้อง"}],"summary":"สรุป 2-4 ประโยค ระบุเอกสารที่ต้องขอเพิ่ม (ถ้ามี)"} โดยมี items ครบทุกข้อตามลำดับ'].join('\n');
-  if (gem && !cfg.gmodel) { try { await aiTest(cfg); } catch (e) { throw e; } }
-  cfg.used = {}; cfg.used[day] = used + 1; await meta('ai', cfg);
-  var ctl = new AbortController(), timer = setTimeout(function () { ctl.abort(); }, 180000), res, url, body, headers, model = gem ? cfg.gmodel : (cfg.model || AI_DEFAULT_MODEL);
-  if (gem) {
-    var parts = []; datas.forEach(function (d, i) { parts.push({ text: intro[i] }); parts.push({ inline_data: { mime_type: d.mime, data: d.data } }); }); parts.push({ text: ask });
-    url = GEMINI_URL + '/models/' + encodeURIComponent(model) + ':generateContent'; headers = { 'content-type': 'application/json' };
-    body = { systemInstruction: { parts: [{ text: AI_SYSTEM }] }, contents: [{ role: 'user', parts: parts }], generationConfig: { temperature: 0.1, responseMimeType: 'application/json', maxOutputTokens: 8192 } };
-  } else {
-    var content = []; datas.forEach(function (d, i) { var src = { type: 'base64', media_type: d.mime, data: d.data }; content.push({ type: 'text', text: intro[i] }); content.push(d.mime === 'application/pdf' ? { type: 'document', source: src } : { type: 'image', source: src }); });
-    content.push({ type: 'text', text: ask });
-    url = AI_URL + '/messages'; headers = aiHeaders(cfg.key); body = { model: model, max_tokens: 4000, system: AI_SYSTEM, messages: [{ role: 'user', content: content }] };
-  }
-  try { var fo = { method: 'POST', headers: headers, signal: ctl.signal, body: JSON.stringify(body) }; res = gem ? await gfetch(url, fo, cfg.gkey) : await fetch(url, fo); }
-  catch (e) { throw new Error(e.name === 'AbortError' ? 'AI ใช้เวลานานเกินไป ลองลดจำนวนไฟล์แล้วตรวจใหม่' : 'เชื่อมต่อ AI ไม่ได้ – ตรวจอินเทอร์เน็ต'); } finally { clearTimeout(timer); }
-  var txt = await res.text();
-  if (!res.ok) {
-    var msg = txt; try { var ej = JSON.parse(txt); msg = (ej.error && ej.error.message) || msg; } catch (e) {}
-    if (gem && geminiAuthError(res.status, txt) && res.status !== 429) throw new Error(geminiAuthError(res.status, txt));
-    if (res.status === 429) throw new Error(gem ? 'เกินโควตาฟรีของ Gemini (จำกัดต่อนาที/ต่อวัน) – รอสักครู่แล้วลองใหม่ หรือลองพรุ่งนี้' : 'AI ไม่ว่างหรือเกินโควตา (429) – ลองใหม่ภายหลัง');
-    throw new Error('AI ตอบกลับผิดพลาด (' + res.status + '): ' + String(msg).slice(0, 160));
-  }
-  var data = JSON.parse(txt), text, usage = null;
-  if (gem) {
-    var cand = (data.candidates || [])[0];
-    if (!cand) throw new Error('Gemini ปฏิเสธการตรวจ' + (data.promptFeedback && data.promptFeedback.blockReason ? ' (' + data.promptFeedback.blockReason + ')' : '') + ' – ลองใหม่หรือเปลี่ยนไฟล์');
-    text = ((cand.content || {}).parts || []).map(function (p) { return p.text || ''; }).join('');
-    if (!text && cand.finishReason) throw new Error('Gemini ไม่ส่งผลตรวจ (' + cand.finishReason + ') – ลองลดจำนวนไฟล์แล้วตรวจใหม่');
-    usage = data.usageMetadata || null;
-  } else { text = (data.content || []).filter(function (b) { return b.type === 'text'; }).map(function (b) { return b.text; }).join(''); usage = data.usage || null; }
-  var out = parseAiJson(text);
-  var V = ['ผ่าน', 'ไม่ผ่าน', 'ไม่พบข้อมูล', 'ไม่เกี่ยวข้อง'];
-  var items = crit.map(function (c, i) {
-    var m = (out.items || []).filter(function (x) { return String(x.cl) === String(c.cl) && (!x.mat || x.mat === c.mat); })[0] || (out.items || [])[i] || {};
-    return { key: c.key, cl: c.cl, mat: c.mat, req: c.req, found: String(m.found || 'AI ไม่ได้ตอบข้อนี้').slice(0, 300), verdict: V.indexOf(m.verdict) >= 0 ? m.verdict : 'ไม่พบข้อมูล' };
-  });
-  var rel = items.filter(function (x) { return x.verdict !== 'ไม่เกี่ยวข้อง'; });
-  var overall = !rel.length ? 'more_docs' : rel.some(function (x) { return x.verdict === 'ไม่ผ่าน'; }) ? 'rejected' : rel.some(function (x) { return x.verdict === 'ไม่พบข้อมูล'; }) ? 'more_docs' : 'approved';
-  s.ai = { items: items, summary: String(out.summary || '').slice(0, 1500), overall: overall, model: (gem ? 'Gemini ' : 'Claude ') + model, at: new Date().toISOString(), files: files.length, usage: usage };
-  s.updated = new Date().toISOString(); await DB.put('submittals', s);
+  await aiGuard(cfg);
+  var datas = [];
+  for (var i = 0; i < files.length; i++) datas.push({ label: 'ไฟล์ ' + (i + 1) + ': ' + files[i].name + (files[i].caption ? ' (' + files[i].caption + ')' : ''), mime: files[i].mime, data: await b64FromBlob(files[i].blob) });
+  var r = await aiCall(cfg, datas, crit, { material: s.material, brand: s.brand, section: s.spec_sec ? specName(s.spec_sec) : 'ข้อกำหนดเฉพาะ' });
+  r.files = files.length; s.ai = r; s.updated = new Date().toISOString(); await DB.put('submittals', s);
   return s;
+}
+// ทดสอบด้วยเอกสารตัวอย่างที่รู้คำตอบ (ใช้เส้นทางเดียวกับการตรวจจริง)
+var AI_SELFTEST = [
+  { key: 't1', cl: '1', mat: 'เหล็กเสริม', kind: 'มาตรฐาน', req: 'เหล็กเส้นข้ออ้อยชั้นคุณภาพ SD40 ตาม มอก. 24', expect: 'ผ่าน' },
+  { key: 't2', cl: '2', mat: 'เหล็กเสริม', kind: 'คุณสมบัติ', req: 'กำลังครากไม่น้อยกว่า 4,000 กก./ตร.ซม.', expect: 'ผ่าน' },
+  { key: 't3', cl: '3', mat: 'เหล็กเสริม', kind: 'มาตรฐาน', req: 'เหล็กข้ออ้อยชั้นคุณภาพ SD50 กำลังครากไม่น้อยกว่า 5,000 กก./ตร.ซม.', expect: 'ไม่ผ่าน' },
+  { key: 't4', cl: '4', mat: 'เหล็กเสริม', kind: 'เอกสาร', req: 'มีใบรับรองผลการทดสอบแรงดึงจากห้องปฏิบัติการของรัฐ', expect: 'ไม่พบข้อมูล' },
+  { key: 't5', cl: '5', mat: 'ท่อ PVC', kind: 'มาตรฐาน', req: 'ท่อ PVC ชั้นคุณภาพ 13.5 ตาม มอก. 17', expect: 'ไม่เกี่ยวข้อง' }];
+function selfTestImage() {
+  var c = document.createElement('canvas'); c.width = 1240; c.height = 1500; var g = c.getContext('2d');
+  g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); g.fillStyle = '#123'; g.font = 'bold 56px THSarabunPSK, Tahoma, sans-serif';
+  g.fillText('บริษัท เหล็กสยามตัวอย่าง จำกัด', 70, 110); g.font = 'bold 46px THSarabunPSK, Tahoma, sans-serif'; g.fillText('ใบรับรองคุณภาพผลิตภัณฑ์ (Certificate of Quality)', 70, 190);
+  g.font = '42px THSarabunPSK, Tahoma, sans-serif';
+  ['ผลิตภัณฑ์: เหล็กเส้นข้ออ้อย (Deformed Bar)', 'มาตรฐาน: มอก. 24-2559 ชั้นคุณภาพ SD40', 'ขนาด: DB16 ความยาว 10 เมตร', 'ล็อตการผลิต: 2569-0815', '', 'ผลการทดสอบจากห้องปฏิบัติการของบริษัท:',
+    '   กำลังคราก (Yield Strength)     4,250 กก./ตร.ซม.', '   กำลังดึงประลัย (Tensile Strength)   6,180 กก./ตร.ซม.', '   การยืด (Elongation)                 19 %', '', 'ผู้ตรวจสอบ: ฝ่ายควบคุมคุณภาพ',
+    'หมายเหตุ: เอกสารตัวอย่างสำหรับทดสอบระบบ'].forEach(function (l, i) { g.fillText(l, 70, 300 + i * 78); });
+  g.strokeStyle = '#123'; g.lineWidth = 4; g.strokeRect(40, 40, c.width - 80, c.height - 80);
+  return c.toDataURL('image/jpeg', 0.92).split(',')[1];
+}
+async function aiSelfTest() {
+  var cfg = await aiCfg(); await aiGuard(cfg);
+  var r = await aiCall(cfg, [{ label: 'ไฟล์ 1: ใบรับรองคุณภาพเหล็ก.jpg', mime: 'image/jpeg', data: selfTestImage() }], AI_SELFTEST, { material: 'เหล็กเส้นข้ออ้อย', brand: 'เหล็กสยามตัวอย่าง', section: 'งานเหล็กเสริมคอนกรีต' });
+  r.items.forEach(function (x, i) { x.expect = AI_SELFTEST[i].expect; x.ok = x.verdict === x.expect; });
+  return r;
 }
 var AI_OVR = { approved: { k: 'ok', t: 'AI แนะนำ: อนุมัติได้' }, more_docs: { k: 'warn', t: 'AI แนะนำ: ขอเอกสารเพิ่มเติม' }, rejected: { k: 'bad', t: 'AI แนะนำ: ไม่อนุมัติ' } };
 function aiCard(s, cfg) {
@@ -2096,6 +2203,7 @@ function aiCard(s, cfg) {
         return '<tr><td>' + esc(x.cl) + '</td><td>' + esc(x.req) + '</td><td>' + esc(x.found) + '</td><td class="v-' + esc(x.verdict) + ' nowrap">' + esc(x.verdict) + '</td></tr>'; }).join('') + '</tbody></table></div>' +
       '<p class="muted">ตรวจเมื่อ ' + th(ai.at.slice(0, 10), true) + ' ' + ai.at.slice(11, 16) + ' • ' + esc(ai.model) + ' • ผลจาก AI เป็นการคัดกรองเบื้องต้น ผู้ควบคุมงานต้องตรวจเอกสารจริงก่อนอนุมัติ</p>';
   }
+  if (S.aiDebug) h += '<button class="btn sm ghost" data-act="aiDebug">ข้อมูลการเรียก AI ล่าสุด</button>';
   return h + '</div>';
 }
 
@@ -2301,7 +2409,8 @@ function docWrap(kind, key, autoHtml) {
     '<div class="row hidden" id="docEditBar" style="margin-top:10px"><span class="banner info" style="margin:0;flex:1">' + ic('edit') + '<span>คลิกที่ข้อความในเอกสารเพื่อแก้ไขได้ทันที • Ctrl+B ตัวหนา • แก้เสร็จแล้วกด <b>บันทึก</b></span></span>' +
     '<button class="btn ok" data-act="docSave" data-kind="' + kind + '" data-key="' + esc(key) + '">' + ic('check') + 'บันทึก</button><button class="btn sec" data-act="docCancel">ยกเลิก</button></div>' +
     (sv ? '<p class="muted" style="margin:8px 0 0">เอกสารนี้แสดงฉบับที่คุณแก้ไขไว้ – ข้อมูลที่อัปเดตภายหลังจะไม่ปรากฏ จนกว่าจะกด "ใช้ฉบับอัตโนมัติ"</p>' : '') + '</div>';
-  var body = sv ? '<div class="doc" id="docEl">' + cleanHtml(sv.html) + '</div>' : String(autoHtml).replace('<div class="doc">', '<div class="doc" id="docEl">');
+  var lg = logoSrc(), logo = lg ? '<img class="doclogo" src="' + esc(lg) + '" alt="โลโก้หน่วยงาน">' : '';
+  var body = sv ? '<div class="doc' + (lg ? ' haslogo' : '') + '" id="docEl">' + logo + cleanHtml(sv.html) + '</div>' : String(autoHtml).replace('<div class="doc">', '<div class="doc' + (lg ? ' haslogo' : '') + '" id="docEl">' + logo);
   return bar + body;
 }
 function canvasToImg(root) {
@@ -2321,6 +2430,7 @@ async function docAction(a, el) {
   if (a === 'docSave') {
     var cl = docEl.cloneNode(true);
     cl.removeAttribute('contenteditable'); cl.classList.remove('editing');
+    $$('img.doclogo', cl).forEach(function (im) { im.remove(); });
     $$('img[data-fid]', cl).forEach(function (im) { im.removeAttribute('src'); im.setAttribute('data-fimg', im.getAttribute('data-fid')); });
     var rec = { id: docId(el.dataset.kind, el.dataset.key), projectId: S.P.id, kind: el.dataset.kind, key: el.dataset.key, html: cleanHtml(cl.innerHTML), updated: new Date().toISOString() };
     if (rec.html.length > 250000) throw new Error('เอกสารใหญ่เกินไปสำหรับการบันทึก (ลดรูปภาพหรือข้อความ)');
@@ -2353,6 +2463,7 @@ async function docxExport(kind, key) {
   var X = window.docx, DXA = X.WidthType.DXA, CW = 9071, FONT = 'TH SarabunPSK', IMGSP = { line: 240, lineRule: X.LineRuleType.AUTO, before: 60, after: 60 };
   var NB = { style: X.BorderStyle.NONE, size: 0, color: 'FFFFFF' }, NOB = { top: NB, bottom: NB, left: NB, right: NB, insideHorizontal: NB, insideVertical: NB };
   var LB = { style: X.BorderStyle.SINGLE, size: 4, color: '999999' }, ALLB = { top: LB, bottom: LB, left: LB, right: LB, insideHorizontal: LB, insideVertical: LB };
+  var SKIP = new Set();
   var isBlock = function (n) { return n.nodeType === 1 && /^(DIV|P|H1|H2|H3|H4|TABLE|FIGURE|UL|OL|LI|SECTION|IMG|CANVAS)$/.test(n.tagName) && !(n.tagName === 'IMG' && n.closest('td')); };
   var cleanTxt = function (t, pre) { return pre ? t : t.replace(/\s+/g, ' '); };
   async function imgRun(src, maxW) {
@@ -2415,6 +2526,7 @@ async function docxExport(kind, key) {
     return new X.Table({ columnWidths: widths, width: { size: CW, type: DXA }, rows: [new X.TableRow({ children: cells, cantSplit: true })], borders: NOB });
   }
   async function block(el, opt) {
+    if (SKIP.has(el)) return [];
     var tag = el.tagName, cls = el.className || '', out = [];
     if (tag === 'H1') return [new X.Paragraph({ children: [new X.TextRun({ text: el.textContent.trim(), bold: true, size: 40, font: FONT })], alignment: X.AlignmentType.CENTER, spacing: { after: 160 } })];
     if (/^H[2-4]$/.test(tag)) return [new X.Paragraph({ children: [new X.TextRun({ text: el.textContent.trim(), bold: true, size: 32, font: FONT })], spacing: { before: 200, after: 80 },
@@ -2467,7 +2579,15 @@ async function docxExport(kind, key) {
     if (tag === 'UL' || tag === 'OL') { var li = Array.prototype.slice.call(el.children); for (var n = 0; n < li.length; n++) { var lp = await convert(li[n]); if (lp[0] && tag === 'OL') lp[0] = new X.Paragraph({ children: [new X.TextRun({ text: (n + 1) + '. ' + li[n].textContent.trim(), font: FONT })] }); out = out.concat(tag === 'OL' ? [lp[0]] : lp); } return out; }
     return convert(el, opt);
   }
-  var children = await convert(root);
+  var lgEl = root.querySelector('img.doclogo'), h1El = root.querySelector('h1'), head = [];
+  if (lgEl && lgEl.src && h1El) {
+    head.push(new X.Table({ columnWidths: [1600, CW - 3200, 1600], width: { size: CW, type: DXA }, borders: NOB, rows: [new X.TableRow({ children: [
+      new X.TableCell({ children: [new X.Paragraph({ children: [await imgRun(lgEl.src, 80)] })], width: { size: 1600, type: DXA }, borders: { top: NB, bottom: NB, left: NB, right: NB }, verticalAlign: X.VerticalAlign.CENTER }),
+      new X.TableCell({ children: [new X.Paragraph({ children: [new X.TextRun({ text: h1El.textContent.trim(), bold: true, size: 40, font: FONT })], alignment: X.AlignmentType.CENTER })], width: { size: CW - 3200, type: DXA }, borders: { top: NB, bottom: NB, left: NB, right: NB }, verticalAlign: X.VerticalAlign.CENTER }),
+      new X.TableCell({ children: [new X.Paragraph('')], width: { size: 1600, type: DXA }, borders: { top: NB, bottom: NB, left: NB, right: NB } })] })] }), new X.Paragraph({ children: [], spacing: { after: 120 } }));
+    SKIP.add(h1El); SKIP.add(lgEl);
+  }
+  var children = head.concat(await convert(root));
   var doc = new X.Document({
     creator: 'ระบบควบคุมงานก่อสร้าง', title: DOC_TITLES[kind] || 'เอกสาร',
     styles: { default: { document: { run: { font: FONT, size: 32 }, paragraph: { spacing: { after: 0 } } } } },
