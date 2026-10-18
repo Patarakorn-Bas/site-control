@@ -175,12 +175,32 @@ table.tbl tfoot td{font-weight:700;background:var(--head);border-top:1px solid v
 .bkgrid td.bkfix{white-space:normal}.bkgrid .bkfix{position:sticky;left:0;background:var(--card);z-index:2;min-width:220px;max-width:340px;box-shadow:1px 0 0 var(--line)}
 .bkgrid thead th{position:sticky;top:0;background:var(--head);z-index:1}.bkgrid thead th.bkfix{z-index:3}
 input.bkin{width:70px;padding:4px 6px;text-align:right;min-height:34px}#bkProj input.bkin{width:120px}input.bkin::placeholder{color:var(--soft);opacity:.8}
+#verBtn{font-size:15px;padding:4px 8px;opacity:.9}#verBtn.newver{border-color:var(--gold);color:var(--gold);opacity:1}#verBtn.newver::after{content:" ●"}
+#updBar{position:fixed;top:8px;left:50%;transform:translateX(-50%);z-index:95;background:#1b2231;color:#fff;border-left:4px solid var(--gold);border-radius:6px;padding:8px 12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;box-shadow:0 6px 20px rgba(0,0,0,.3);font-size:18px;max-width:94%}
+#updBar .btn.ghost{color:#fff}
+body.presenting .top,body.presenting .side,body.presenting .bnav,body.presenting #bottomNav{display:none!important}
+.pres{position:fixed;inset:0;z-index:70;background:var(--bg);display:flex;flex-direction:column}
+.pslide{flex:1;overflow:auto;padding:28px 4vw 12px;font-size:clamp(18px,1.6vw,26px)}
+.phd{display:flex;justify-content:space-between;align-items:baseline;gap:16px;border-bottom:3px solid var(--gold);margin-bottom:18px;padding-bottom:6px}
+.phd h2{margin:0;font-size:clamp(28px,2.8vw,44px);color:var(--navy)}.phd span{color:var(--soft);font-size:.8em;text-align:right}
+.ptitle{min-height:70vh;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:10px}
+.ptitle img{height:clamp(90px,14vh,150px)}.pt1{font-size:clamp(30px,3vw,48px);font-weight:700;color:var(--navy)}.pt2{font-size:clamp(26px,2.6vw,42px);font-weight:700;max-width:90%}
+.pt3{font-size:clamp(20px,1.8vw,30px)}.pt4{color:var(--soft);margin-top:18px}
+.pkpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px;margin-bottom:16px}
+.pk{background:var(--card);border:1px solid var(--line);border-top:4px solid var(--pri2);border-radius:8px;padding:14px 18px}.pk .l{color:var(--soft)}.pk .v{font-size:clamp(32px,3.4vw,56px);font-weight:700;line-height:1.1}.pk .s{color:var(--soft);font-size:.85em}
+.pstat{font-size:1.15em;margin-top:8px}.pchart{height:62vh;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px}
+.ptbl{width:100%;font-size:1em;background:var(--card)}.ptbl th,.ptbl td{padding:8px 10px;border-bottom:1px solid var(--line)}.ptbl th{background:var(--navy);color:#fff;text-align:left}
+.pbar{position:relative;height:18px;background:var(--head);border-radius:9px}.pbar i{position:absolute;left:0;top:0;bottom:0;background:var(--pri2);border-radius:9px}.pbar b{position:absolute;top:-4px;bottom:-4px;width:3px;background:var(--bad)}
+.pnote{color:var(--soft);font-size:.8em}.pphotos{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.pphotos img{width:100%;height:28vh;object-fit:cover;border-radius:6px;background:var(--head)}.pphotos figcaption{color:var(--soft);font-size:.8em}
+.pctl{display:flex;gap:8px;align-items:center;padding:8px 14px;border-top:1px solid var(--line);background:var(--card)}.pnum{min-width:70px;text-align:center}
+@media (max-width:700px){.pphotos{grid-template-columns:1fr 1fr}}@media (min-width:900px){.pkpis{grid-template-columns:repeat(3,1fr)}}
 </style>
 </head>
 <body>
 <a class="skip" href="#main">ข้ามไปยังเนื้อหา</a>
 <header class="top">
   <div class="brand" id="brand" title="หน้าหลัก"><img src="icons/icon-v3-192.png" alt=""><span id="brandText">ระบบควบคุมงานก่อสร้าง<small>CONSTRUCTION SUPERVISION</small></span></div>
+  <button class="tbtn" id="verBtn" title="เวอร์ชันแอป – กดเพื่อตรวจหาอัปเดต">v</button>
   <button class="tbtn hidden" id="syncBtn" title="ซิงก์ข้อมูล"></button>
   <button class="tbtn" id="installBtn">ติดตั้งแอป</button>
   <button class="tbtn" id="menuBtn" aria-label="เมนู">เมนู</button>

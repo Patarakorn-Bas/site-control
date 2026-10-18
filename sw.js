@@ -1,8 +1,8 @@
 /* Service worker: ทำให้แอปเปิดได้แม้ไม่มีอินเทอร์เน็ต • เปลี่ยน VERSION ทุกครั้งที่อัปเดตไฟล์ */
-var VERSION = 'sc-v2.7.2';
+var VERSION = 'sc-v2.8.0';
 var CORE = ['./', 'index.html', 'app.js', 'spec-data.js', 'manifest.webmanifest', 'vendor/chart.umd.min.js', 'vendor/xlsx.full.min.js', 'vendor/jszip.min.js', 'vendor/docx.min.js', 'fonts/THSarabunPSK-Regular.woff2', 'fonts/THSarabunPSK-Bold.woff2', 'templates/template_single.xlsx', 'templates/template_multi.xlsx',
   'icons/icon-v3-192.png', 'icons/icon-v3-512.png', 'icons/icon-v3-maskable-512.png', 'icons/apple-touch-icon-v3.png', 'icons/favicon-v3.ico', 'icons/org-logo.png'];
-self.addEventListener('install', function (e) { e.waitUntil(caches.open(VERSION).then(function (c) { return c.addAll(CORE); })); });
+self.addEventListener('install', function (e) { e.waitUntil(caches.open(VERSION).then(function (c) { return Promise.all(CORE.map(function (u) { return fetch(new Request(u, { cache: 'reload' })).then(function (r) { if (!r.ok) throw new Error(u + ' ' + r.status); return c.put(u, r); }); })); })); });
 self.addEventListener('activate', function (e) {
   e.waitUntil(caches.keys().then(function (ks) { return Promise.all(ks.filter(function (k) { return k !== VERSION; }).map(function (k) { return caches.delete(k); })); }).then(function () { return self.clients.claim(); }));
 });
@@ -18,6 +18,7 @@ self.addEventListener('fetch', function (e) {
     return;
   }
   if (url.origin !== location.origin) return;
+  if (/version\.json$/.test(url.pathname)) return; // ตรวจเวอร์ชันจากเว็บเสมอ (ไม่ใช้แคช)
   // ไฟล์ของแอป: ใช้จากแคชก่อน (เร็ว/ออฟไลน์) • หน้าเว็บ: ถ้าไม่มีเน็ตให้ใช้ index.html
   e.respondWith(caches.match(req, { ignoreSearch: true }).then(function (hit) {
     return hit || fetch(req).then(function (r) {

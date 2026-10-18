@@ -2,7 +2,7 @@
    คุมงานก่อสร้าง (PWA) — ใช้งานคนเดียว ข้อมูลเก็บในเครื่อง (IndexedDB)
    ===================================================================== */
 'use strict';
-var APP_VERSION = '2.7.2';
+var APP_VERSION = '2.8.0';
 
 /* ---------------- IndexedDB ---------------- */
 var DB_NAME = 'sitecontrol', DB_VER = 4;
@@ -269,12 +269,13 @@ async function render() {
   S.route = parseRoute();
   var r = S.route, m = $('#main');
   if (chart) { chart.destroy(); chart = null; }
+  if ((S.route[2] || '') !== 'present') document.body.classList.remove('presenting');
   try {
     if (r[0] === 'p') {
       if (!S.P || S.P.id !== r[1]) await loadProject(r[1]);
       if (!S.P) { go('/'); return; }
       var v = r[2] || 'dash';
-      var views = { dash: vDash, tasks: vTasks, back: vBack, daily: vDaily, weekly: vWeekly, mat: vMat, fin: vFin, set: vProjSet, print: vPrint };
+      var views = { dash: vDash, tasks: vTasks, back: vBack, present: vPresent, daily: vDaily, weekly: vWeekly, mat: vMat, fin: vFin, set: vProjSet, print: vPrint };
       renderNav();
       m.innerHTML = await (views[v] || vDash)(r.slice(3));
     } else {
@@ -569,7 +570,7 @@ async function vDash() {
   if (!todayRep && d >= projStart() && d <= addDays(projEnd(), 60)) h += '<div class="banner info"><span class="grow">ยังไม่ได้บันทึกรายงานประจำวันของวันนี้</span><button class="btn sm" data-go="/p/' + pid + '/daily/' + iso(d) + '">บันทึกเลย</button></div>';
   var L = ldInfo(), nextI = sortedInst().filter(function (i) { return !i.accepted; })[0];
   h = pageHead('ภาพรวมโครงการ', 'ข้อมูล ณ วันที่ ' + th(d) + ' • วันที่ ' + Math.max(0, el) + ' ของสัญญา', badge(spiState(ac, pl)) +
-    '<button class="btn sec" data-act="printDash">' + ic('print') + 'พิมพ์</button><button class="btn" data-act="exportV4">' + ic('excel') + 'ส่งออกรายงาน Excel</button>') + h;
+    '<button class="btn sec" data-go="/p/' + pid + '/present">' + ic('dash') + 'นำเสนอ</button><button class="btn sec" data-act="printDash">' + ic('print') + 'พิมพ์</button><button class="btn" data-act="exportV4">' + ic('excel') + 'ส่งออกรายงาน Excel</button>') + h;
   h += '<div class="card"><h2>ความก้าวหน้าและระยะเวลา</h2><div class="kpis">' +
     kpi('ผลงานตามแผน', pct(pl), (S.tasks.some(function (t) { return t.rs || t.rf; }) ? 'แผนเร่งรัด ' + pct(rv) : '&nbsp;')) +
     kpi('ผลงานจริง', pct(ac), seriesDominant() ? 'ตามผลงานรวมที่บันทึก ณ ' + th(seriesList().slice(-1)[0].date, true) : S.tasks.length + ' รายการ', ac >= pl ? 'ok-t' : 'bad-t') +
@@ -644,7 +645,7 @@ async function vTasks() {
     if (TF.st === 'active') return t.as && !t.af; if (TF.st === 'bad') return st.k === 'bad'; if (TF.st === 'todo') return !t.as && num(t.pct) === 0; if (TF.st === 'done') return !!t.af;
     return true;
   });
-  if (!S.tasks.length) return h + '<div class="card empty">ยังไม่มีรายการงาน – กด "＋ เพิ่มรายการ" หรือ "วางจาก Excel"</div>';
+  if (!S.tasks.length) return h + '<div class="card empty"><p>ยังไม่มีรายการงาน – กด "＋ เพิ่มรายการ" หรือ "วางจาก Excel"</p>' + (isMulti() && parts().length ? '<p>หรือสร้างรายการงานจากรายชื่องานส่วน (' + parts().length + ' รายการ) แล้วกรอก % ของแต่ละรายการได้ทันที</p><button class="btn" data-go="/p/' + pid + '/back">กรอก % แต่ละรายการ</button>' : '') + '</div>';
   if (!list.length) return h + '<div class="card empty">ไม่พบรายการที่ตรงกับตัวกรอง</div>';
   var item = function (o) {
     var t = o.t, st = taskStatus(t, d), pl = spanPct(D(t.bs), D(t.bf), d);
@@ -765,7 +766,76 @@ function pasteTasks() {
 }
 
 /* ---------------- บันทึกผลงานย้อนหลัง (โครงการที่เริ่มก่อนใช้แอป / ไม่ได้บันทึกรายวัน) ---------------- */
-var BK = { tab: 'proj', per: '10d', unit: 'cum', part: '' };
+var BK = { tab: 'quick', per: '10d', unit: 'cum', part: '' };
+// ---- กรอก % ผลงานของแต่ละรายการ ณ วันที่เดียว (ง่ายที่สุด) • ถ้ายังไม่มีรายการงาน สร้างจากรายชื่องานส่วนให้
+function quickRows() {
+  if (S.tasks.length) return wbsList().map(function (o) { return { t: o.t, wbs: o.wbs }; });
+  var src = isMulti() ? parts() : [];
+  if (!src.length) src = ['', '', '', '', ''];
+  return src.map(function (n) { return { t: { id: '', part: isMulti() ? n : (parts()[0] || 'งานหลัก'), cat: cats()[0] || 'งานทั่วไป', desc: n, boq: '', weight: '', bs: '', bf: '', pct: 0 }, wbs: '' }; });
+}
+function quickRowHtml(r, i, dIso, hist) {
+  var t = r.t, cur = t.id ? taskPctAt(hist, t.id, dIso) : 0;
+  return '<tr data-qr="' + i + '" data-id="' + esc(t.id) + '" data-part="' + esc(t.part || '') + '" data-cat="' + esc(t.cat || '') + '"><td class="muted">' + (i + 1) + '</td>' +
+    '<td class="bkfix"><textarea class="i qdesc" rows="2" aria-label="รายการงาน">' + esc(t.desc) + '</textarea>' + (isMulti() && !t.id && r.newRow ? '<select class="i qpart" aria-label="งานส่วน" style="margin-top:4px">' + opts(parts(), t.part) + '</select>' : isMulti() && t.part && t.part !== t.desc ? '<div class="muted" style="font-size:14px">' + esc(t.part) + '</div>' : '') + '</td>' +
+    '<td><input class="i qboq" inputmode="decimal" value="' + esc(t.boq) + '" style="width:120px" aria-label="มูลค่า"></td>' +
+    '<td><input class="i qw" inputmode="decimal" value="' + esc(t.weight) + '" style="width:80px" aria-label="น้ำหนัก %"></td>' +
+    '<td><input class="i qbs" type="date" value="' + esc(t.bs) + '" style="width:150px"></td><td><input class="i qbf" type="date" value="' + esc(t.bf) + '" style="width:150px"></td>' +
+    '<td><input class="i qp bkin" inputmode="decimal" value="' + (cur ? +cur.toFixed(2) : '') + '" placeholder="0" style="width:80px" aria-label="% ผลงาน"></td></tr>';
+}
+function vBackQuick(pid) {
+  var dIso = BK.qdate || iso(today()), hist = histIndex(), rows = quickRows(), isNew = !S.tasks.length;
+  var h = '<div class="card"><div class="row" style="align-items:flex-end;gap:16px">' + inp('qDate', 'ผลงาน ณ วันที่', dIso, 'date', 'max="' + iso(today()) + '" style="width:190px"') +
+    '<p class="muted grow" style="margin:0">พิมพ์ % ความคืบหน้าของแต่ละรายการ (0–100) ณ วันที่เลือก แล้วกดบันทึก • บันทึกหลายวันได้ เช่น สิ้นเดือนละครั้ง เพื่อให้กราฟ S-Curve มีหลายจุด</p></div>' +
+    (isNew ? '<div class="banner warn" style="margin:12px 0 0"><span class="grow">โครงการนี้ยังไม่มีรายการงาน – ตารางด้านล่าง' + (isMulti() && parts().length ? 'ดึงรายชื่อจากช่อง "งานส่วน" ของตั้งค่าโครงการ (' + parts().length + ' รายการ) มาให้แล้ว' : 'มีแถวว่างให้กรอก') + ' แก้ชื่อ ใส่มูลค่า และ % ได้เลย กดบันทึกแล้วจะสร้างเป็นรายการงานให้</span></div>' : '') + '</div>';
+  h += '<div class="card"><div class="tw bkgrid"><table class="tbl" id="qTbl"><thead><tr><th>#</th><th class="bkfix">รายการงาน</th><th>มูลค่า (บาท)</th><th>น้ำหนัก %</th><th>เริ่มตามแผน</th><th>เสร็จตามแผน</th><th>% ผลงาน</th></tr></thead><tbody>' +
+    rows.map(function (r, i) { return quickRowHtml(r, i, dIso, hist); }).join('') + '</tbody><tfoot><tr><td></td><td class="bkfix">รวม</td><td id="qSumB"></td><td id="qSumW"></td><td colspan="2"></td><td id="qSumP"></td></tr></tfoot></table></div>' +
+    '<p class="muted">น้ำหนักงาน: ใส่มูลค่าทุกรายการ (ระบบคิดสัดส่วนให้) หรือใส่น้ำหนัก % ให้รวมได้ 100 • ถ้าไม่ใส่ทั้งสองอย่างเลย ทุกรายการจะมีน้ำหนักเท่ากัน • วันที่แผนเว้นว่างได้ (จะใช้ช่วงสัญญา ' + th(projStart(), true) + ' – ' + th(projEnd(), true) + ')</p>' +
+    '<div class="row"><button class="btn" data-act="qSave">' + ic('check') + (isNew ? 'สร้างรายการงานและบันทึกผลงาน' : 'บันทึกผลงาน') + '</button>' + (isNew ? '<button class="btn sec" data-act="qAdd">' + ic('plus') + 'เพิ่มแถว</button>' : '') + '<span class="muted">ผลงานรวมโดยประมาณ: <b id="qTot">-</b></span></div></div>';
+  after(function () {
+    var calc = function () {
+      var tr = $$('#qTbl tbody tr'), B = 0, W = 0, anyW = false, n = 0, data = [];
+      tr.forEach(function (r) { var b = num(r.querySelector('.qboq').value.replace(/,/g, '')), w = r.querySelector('.qw').value.trim(), p = num(r.querySelector('.qp').value);
+        if (!r.querySelector('.qdesc').value.trim()) return; n++; B += b; if (w !== '') { anyW = true; W += num(w); } data.push({ b: b, w: w, p: p }); });
+      var tot = data.reduce(function (a, x) { var wt = x.w !== '' ? num(x.w) / 100 : B ? x.b / B : (anyW ? 0 : 1 / Math.max(1, n)); return a + wt * x.p / 100; }, 0);
+      tr.forEach(function (r) { var b = num(r.querySelector('.qboq').value.replace(/,/g, '')), q = r.querySelector('.qw'); q.placeholder = q.value.trim() === '' && B ? (b / B * 100).toFixed(2) : (!B && !anyW && n ? (100 / n).toFixed(2) : ''); });
+      $('#qSumB').textContent = B ? money(B) : ''; $('#qSumW').textContent = anyW ? W.toFixed(2) + '%' : ''; $('#qTot').textContent = pct(tot);
+    };
+    $('#qTbl').addEventListener('input', calc); calc();
+    var qd = $('#qDate'); if (qd) qd.onchange = function () { BK.qdate = qd.value; render(); };
+  });
+  return h;
+}
+async function quickSave() {
+  var dIso = val(document, 'qDate') || iso(today()), src = ($('#bkSrc') || {}).value || '', now = new Date().toISOString();
+  if (!D(dIso)) throw new Error('ระบุวันที่'); if (D(dIso) > today()) throw new Error('บันทึกผลงานล่วงหน้าไม่ได้');
+  var rows = $$('#qTbl tbody tr').map(function (r) { return { id: r.dataset.id, part: r.querySelector('.qpart') ? r.querySelector('.qpart').value : r.dataset.part, cat: r.dataset.cat, desc: r.querySelector('.qdesc').value.trim(), boq: r.querySelector('.qboq').value.replace(/,/g, '').trim(),
+    w: r.querySelector('.qw').value.replace('%', '').trim(), bs: r.querySelector('.qbs').value, bf: r.querySelector('.qbf').value, p: r.querySelector('.qp').value.replace('%', '').trim() }; }).filter(function (x) { return x.desc || x.id; });
+  if (!rows.length) throw new Error('ยังไม่มีรายการ');
+  rows.forEach(function (x, i) {
+    if (!x.desc) throw new Error('แถวที่ ' + (i + 1) + ': ใส่ชื่อรายการงาน');
+    if (x.p !== '' && (isNaN(parseFloat(x.p)) || num(x.p) < 0 || num(x.p) > 100)) throw new Error('แถวที่ ' + (i + 1) + ': % ต้องอยู่ระหว่าง 0–100');
+    if (x.bs && x.bf && x.bf < x.bs) throw new Error('แถวที่ ' + (i + 1) + ': วันเสร็จต้องไม่ก่อนวันเริ่ม');
+  });
+  var noW = rows.every(function (x) { return !num(x.boq) && x.w === ''; }), eq = noW ? +(100 / rows.length).toFixed(4) : null;
+  var st = iso(projStart()), en = iso(projEnd()), created = 0, rec = 0, base = S.tasks.length;
+  for (var i = 0; i < rows.length; i++) {
+    var x = rows[i], t = x.id ? taskById(x.id) : null;
+    if (!t) { t = { id: uid() + i, projectId: S.P.id, order: base + i + 1, pct: 0, part: x.part || parts()[0] || 'งานหลัก', cat: x.cat || cats()[0] || 'งานทั่วไป' }; S.tasks.push(t); created++;
+      if (isMulti() && parts().indexOf(t.part) < 0) S.P.parts.push(t.part); if (cats().indexOf(t.cat) < 0) S.P.cats.push(t.cat); }
+    t.desc = x.desc; t.boq = x.boq; t.weight = noW ? String(eq) : x.w; t.bs = x.bs || t.bs || st; t.bf = x.bf || t.bf || en; t.updated = now;
+    await DB.put('tasks', t);
+    if (x.p !== '') { var v = Math.round(num(x.p) * 100) / 100, hist = histIndex();
+      if (Math.abs(taskPctAt(hist, t.id, dIso) - v) > 1e-6) {
+        var ex = S.progress.filter(function (p) { return p.taskId === t.id && p.date === dIso && p.source === 'backfill'; })[0];
+        if (ex) { ex.pct = v; ex.note = src; ex.ts = Date.now(); await DB.put('progress', ex); }
+        else { var e = { id: uid() + 'q' + i, projectId: S.P.id, taskId: t.id, date: dIso, pct: v, note: src, source: 'backfill', ts: Date.now() }; await DB.put('progress', e); S.progress.push(e); }
+        await syncTaskPct(t); rec++; } }
+  }
+  S.P.backSrc = src; BK.src = null; await saveProject();
+  toast((created ? 'สร้างรายการงาน ' + created + ' รายการ • ' : '') + 'บันทึกผลงาน ' + rec + ' รายการ ณ ' + th(dIso, true) + ' • ผลงานรวม ' + pct(actualAt(D(dIso))), false, 5000); render();
+}
+
 // แบ่งงวดตั้งแต่วันเริ่มสัญญาถึงวันนี้: 10d = ตัดทุกวันที่ 10, 20 และสิ้นเดือน (แบบเดียวกับชีต S-Curve) • 7d = รายสัปดาห์ • m = รายเดือน
 function backPeriods(mode) {
   var st = projStart(), d = today(), out = [], s = st;
@@ -782,17 +852,18 @@ function backSrcText() { return BK.pid === (S.P && S.P.id) && BK.src != null ? B
 async function vBack() {
   var pid = S.P.id, per = backPeriods(BK.per), hist = histIndex(), w = weightFn();
   var h = pageHead('บันทึกผลงานย้อนหลัง', 'สำหรับโครงการที่เริ่มงานก่อนใช้แอป หรือช่วงที่ไม่ได้บันทึกรายงานประจำวัน – กราฟ S-Curve รายงาน และไฟล์ Excel จะใช้ข้อมูลนี้ทันที',
-    '<button class="btn sec" data-go="/p/' + pid + '/tasks">' + ic('chevl') + 'กลับหน้าผลงาน</button>');
+    (backHasData() ? '<button class="btn ghost bad-t" data-act="bkWipe">' + ic('trash') + 'ลบข้อมูลย้อนหลังทั้งหมด</button>' : '') + '<button class="btn sec" data-go="/p/' + pid + '/tasks">' + ic('chevl') + 'กลับหน้าผลงาน</button>');
   h += '<div class="banner info"><span class="grow"><b>ใช้ข้อมูลจากเอกสารที่ตรวจสอบได้เท่านั้น</b> เช่น รายงานความก้าวหน้าของผู้รับจ้างที่ผู้ควบคุมงานรับรอง ใบส่งงานงวด/ใบตรวจรับ รูปถ่ายที่มีวันที่ หรือบันทึกการตรวจงาน • ' +
     'ระบบเก็บที่มาไว้กับทุกค่าที่บันทึก และรายงานจะระบุว่าเป็นข้อมูลบันทึกย้อนหลัง • ไม่ควรย้อนสร้างรายงานประจำวัน (สภาพอากาศ คนงาน เครื่องจักร) ของวันที่ไม่ได้บันทึกไว้จริง</span></div>';
   h += '<div class="card"><div class="grid2">' + inp('bkSrc', 'อ้างอิงเอกสาร (บันทึกไว้กับข้อมูลทุกค่า)', backSrcText(), '', 'placeholder="เช่น รายงานความก้าวหน้าผู้รับจ้าง ณ 30 เม.ย. 69 (ลงนามรับรองแล้ว)"') +
     '<div><label class="f">ช่วงงวด</label><div class="seg" id="bkPer">' + [['10d', 'ทุก 10 วัน'], ['7d', 'รายสัปดาห์'], ['m', 'รายเดือน']].map(function (x) {
       return '<button type="button" data-bkper="' + x[0] + '" class="' + (BK.per === x[0] ? 'on' : '') + '">' + x[1] + '</button>'; }).join('') + '</div></div></div>' +
-    '<label class="f">วิธีบันทึก</label><div class="seg">' + [['proj', 'ผลงานรวมทั้งโครงการ (รายงวด)'], ['task', 'แยกรายรายการงาน (ตาราง)']].map(function (x) {
+    '<label class="f">วิธีบันทึก</label><div class="seg">' + [['quick', 'กรอก % แต่ละรายการ (ง่ายที่สุด)'], ['proj', 'ผลงานรวมทั้งโครงการ (รายงวด)'], ['task', 'รายรายการ × รายงวด (ตาราง)']].map(function (x) {
       return '<button type="button" data-bktab="' + x[0] + '" class="' + (BK.tab === x[0] ? 'on' : '') + '">' + x[1] + '</button>'; }).join('') + '</div>' +
-    '<p class="muted" style="margin:6px 0 0">' + (BK.tab === 'proj' ? 'เร็วที่สุด – กรอกเฉพาะ % ผลงานสะสมของทั้งโครงการแต่ละงวด (เช่น ตัวเลขแถว "Actual : % Accumulate" ในตารางของผู้รับจ้าง) ใช้กับ S-Curve ภาพรวม รายงานสัปดาห์ และไฟล์ Excel • ตัวเลขรายงานส่วน/หมวดงานยังคิดจากผลงานรายรายการ'
+    '<p class="muted" style="margin:6px 0 0">' + (BK.tab === 'quick' ? 'กรอก % ความคืบหน้าของแต่ละรายการงานเอง ณ วันที่เลือก (เช่น วันนี้) ระบบรวมเป็นผลงานทั้งโครงการตามน้ำหนักงาน • ใช้ได้ทันทีแม้ยังไม่มีรายการงาน' : BK.tab === 'proj' ? 'เร็วที่สุด – กรอกเฉพาะ % ผลงานสะสมของทั้งโครงการแต่ละงวด (เช่น ตัวเลขแถว "Actual : % Accumulate" ในตารางของผู้รับจ้าง) ใช้กับ S-Curve ภาพรวม รายงานสัปดาห์ และไฟล์ Excel • ตัวเลขรายงานส่วน/หมวดงานยังคิดจากผลงานรายรายการ'
       : 'ละเอียดที่สุด – กรอกผลงานของแต่ละรายการในแต่ละงวด ระบบบันทึกเป็นประวัติผลงานของรายการนั้น ทำให้ทุกหน้าจอ รายงานส่วน/หมวดงาน และไฟล์ Excel ตรงกันทั้งหมด') + '</p></div>';
   if (!per.length) return h + '<div class="card empty">โครงการยังไม่เริ่ม (วันเริ่มสัญญา ' + th(projStart()) + ')</div>';
+  if (BK.tab === 'quick') return h + vBackQuick(pid);
   if (BK.tab === 'proj') {
     var L = seriesList(), byDate = {}; L.forEach(function (x) { byDate[x.date] = x; });
     var extra = L.filter(function (x) { return !per.some(function (p) { return iso(p.e) === x.date; }); });
@@ -825,7 +896,7 @@ async function vBack() {
     '<p class="muted">ตารางนี้ต้องมีรายการงาน (เนื้องาน มูลค่า/น้ำหนัก วันเริ่ม–เสร็จตามแผน) ก่อน เช่น 17 รายการตามแผนงานของผู้รับจ้าง • ชื่อในช่อง "งานส่วน" ของตั้งค่าโครงการเป็นเพียงกลุ่มงาน ไม่ใช่รายการงาน' +
     (isMulti() && parts().length > 5 ? ' • ถ้าใส่เนื้องานแต่ละรายการไว้เป็นงานส่วน แนะนำให้ย้ายมาเป็นรายการงานแทน แล้วรวมงานส่วนเหลือเฉพาะกลุ่มใหญ่ (อาคาร รั้ว ถนน ฯลฯ)' : '') + '</p>' +
     '<div class="row" style="justify-content:center"><button class="btn" data-act="pasteTasks">' + ic('upload') + 'วางรายการงานจาก Excel</button><button class="btn sec" data-go="/p/' + pid + '/tasks">' + ic('plus') + 'ไปเพิ่มรายการงาน</button>' +
-    '<button class="btn sec" data-bktab="proj">ใช้แบบผลงานรวมทั้งโครงการแทน</button></div></div>';
+    '<button class="btn" data-bktab="quick">กรอก % แต่ละรายการเอง (สร้างรายการจากงานส่วน)</button><button class="btn sec" data-bktab="proj">ใช้แบบผลงานรวมทั้งโครงการแทน</button></div></div>';
   h += '<div class="card"><div class="tw bkgrid"><table class="tbl" id="bkTask"><thead><tr><th class="bkfix">รายการงาน</th><th class="num">น้ำหนัก</th>' + per.map(function (p) {
     return '<th class="num" title="' + th(p.s) + ' – ' + th(p.e) + '">งวด ' + p.n + '<br><span class="muted">' + th(p.e, true) + '</span></th>'; }).join('') + '</tr></thead><tbody>' +
     list.map(function (o) { var t = o.t, wt = w(t), prev = taskPctAt(hist, t.id, first);
@@ -886,7 +957,7 @@ async function backSaveTask() {
     if (ch) touched.push(t);
   }
   for (var k = 0; k < touched.length; k++) await syncTaskPct(touched[k]);
-  if (src !== backSrcText()) { S.P.backSrc = src; await saveProject(); }
+  BK.src = null; if (src !== (S.P.backSrc || '')) { S.P.backSrc = src; await saveProject(); }
   toast(n ? 'บันทึกผลงานย้อนหลัง ' + n + ' ค่า (' + touched.length + ' รายการงาน)' : 'ไม่มีค่าที่เปลี่ยนแปลง', false, 3500); render();
 }
 async function backSaveProj() {
@@ -897,7 +968,7 @@ async function backSaveProj() {
   var keep = seriesList().filter(function (x) { return !shown[x.date]; }), all = keep.concat(add).sort(function (a, b) { return a.date < b.date ? -1 : 1; });
   var down = all.filter(function (x, i) { return i && num(x.pct) < num(all[i - 1].pct) - 1e-9; });
   if (down.length && !(await confirmBox('ผลงานสะสมลดลงที่ ' + down.map(function (x) { return th(x.date, true); }).join(', ') + ' – ตรวจตัวเลขอีกครั้ง หรือกดบันทึกต่อ', 'บันทึกต่อ'))) return;
-  S.P.actualSeries = all; S.P.backSrc = src; await saveProject();
+  S.P.actualSeries = all; S.P.backSrc = src; BK.src = null; await saveProject();
   toast('บันทึกผลงานรวม ' + add.length + ' งวดแล้ว – ดูกราฟได้ที่หน้าภาพรวม', false, 3500); render();
 }
 function backPaste() {
@@ -1384,7 +1455,7 @@ async function vApp() {
       '<button class="btn" data-act="install">' + ic('download') + 'ติดตั้งลงเครื่องนี้</button>' +
       '<p class="muted">' + (ios ? 'iPhone/iPad: เปิดใน Safari → ปุ่มแชร์ → "เพิ่มไปยังหน้าจอโฮม"' : 'คอมพิวเตอร์ (Chrome/Edge): กดไอคอน ⊕ ท้ายช่องที่อยู่เว็บ หรือเมนู ⋮ → "ติดตั้งแอป" • Android (Chrome): เมนู ⋮ → "ติดตั้งแอป" / "เพิ่มลงในหน้าจอหลัก"') + '</p>') +
     '<p class="muted">ติดตั้งแล้วเปิดจากไอคอนได้เหมือนโปรแกรม และใช้งานได้แม้ไม่มีอินเทอร์เน็ต</p></div>' +
-    '<div class="card"><h2>เกี่ยวกับ</h2><p>คุมงานก่อสร้าง เวอร์ชัน ' + APP_VERSION + ' • ข้อมูลรายการประกอบแบบ: ' + esc((window.SPEC && SPEC.source) || '-') + ' (' + ((window.SPEC && SPEC.items.length) || 0) + ' ข้อ)</p>' +
+    '<div class="card"><h2>เกี่ยวกับ</h2><div class="row" style="margin-bottom:8px"><button class="btn sec" data-act="about">ตรวจหาอัปเดต / มีอะไรใหม่</button><button class="btn ghost" data-act="forceRefresh">บังคับโหลดเวอร์ชันล่าสุด</button></div><p>คุมงานก่อสร้าง เวอร์ชัน ' + APP_VERSION + ' • ข้อมูลรายการประกอบแบบ: ' + esc((window.SPEC && SPEC.source) || '-') + ' (' + ((window.SPEC && SPEC.items.length) || 0) + ' ข้อ)</p>' +
     '<button class="btn sec" data-act="samples">สร้างโครงการตัวอย่าง (3 แบบ)</button> <button class="btn sm ghost bad-t" data-act="wipe">ล้างข้อมูลทั้งหมด</button></div>';
 }
 function b64FromBlob(b) { return new Promise(function (res, rej) { var r = new FileReader(); r.onload = function () { res(String(r.result).split(',')[1] || ''); }; r.onerror = function () { rej(r.error); }; r.readAsDataURL(b); }); }
@@ -1506,6 +1577,7 @@ async function doInstall() {
 }
 /* ---------------- EVENTS ---------------- */
 document.addEventListener('click', async function (e) {
+  var pb = e.target.closest('[data-pres]'); if (pb) { if (!pb.disabled) presNav(pb.dataset.pres); return; }
   var bkb = e.target.closest('[data-bkper],[data-bktab],[data-bkunit]');
   if (bkb) { var sv = $('#bkSrc'); if (sv) { BK.src = sv.value; BK.pid = S.P.id; }
     if (bkb.dataset.bkper) BK.per = bkb.dataset.bkper; if (bkb.dataset.bktab) BK.tab = bkb.dataset.bktab; if (bkb.dataset.bkunit) BK.unit = bkb.dataset.bkunit; return render(); }
@@ -1559,9 +1631,19 @@ document.addEventListener('click', async function (e) {
     else if (a === 'wipe') { if (await confirmBox('ลบข้อมูลทุกโครงการในเครื่องนี้? (ถ้าเปิดซิงก์ไว้ ข้อมูลบนคลาวด์ยังอยู่และจะถูกดึงกลับเมื่อซิงก์ครั้งถัดไป)', 'ลบทั้งหมด')) { for (var q = 0; q < STORES.length; q++) if (STORES[q] !== 'meta') await DB.clear(STORES[q]); await syncResetLocal(); S.P = null; toast('ล้างข้อมูลในเครื่องแล้ว'); go('/'); } }
     else if (a === 'pasteTasks') pasteTasks();
     else if (a === 'orgParts') orgParts();
+    else if (a === 'about') openAbout();
+    else if (a === 'forceRefresh') { if (await confirmBox('ล้างไฟล์แอปที่เก็บไว้แล้วโหลดเวอร์ชันล่าสุดจากเว็บ? (ข้อมูลโครงการไม่หาย)', 'โหลดใหม่')) await forceRefresh(); }
+    else if (a === 'bkWipe') {
+      var nB = S.progress.filter(function (x) { return x.source === 'backfill'; });
+      if (!(await confirmBox('ลบข้อมูลที่บันทึกย้อนหลังทั้งหมดของโครงการนี้? (ผลงานรายรายการ ' + nB.length + ' ค่า และผลงานรวมรายงวด ' + seriesList().length + ' ค่า • รายการงานยังอยู่)', 'ลบ'))) return;
+      await DB.delMany('progress', nB.map(function (x) { return x.id; })); S.progress = S.progress.filter(function (x) { return x.source !== 'backfill'; });
+      var tch = {}; nB.forEach(function (x) { tch[x.taskId] = 1; }); for (var tid in tch) { var tk = taskById(tid); if (tk) await syncTaskPct(tk); }
+      S.P.actualSeries = []; await saveProject(); toast('ลบข้อมูลบันทึกย้อนหลังแล้ว'); render(); }
     else if (a === 'bkSaveProj') await backSaveProj();
     else if (a === 'bkSaveTask') await backSaveTask();
     else if (a === 'bkPaste') backPaste();
+    else if (a === 'qSave') await quickSave();
+    else if (a === 'qAdd') { var tb = $('#qTbl tbody'), n = tb.children.length; tb.insertAdjacentHTML('beforeend', quickRowHtml({ newRow: true, t: { id: '', part: parts()[0] || 'งานหลัก', cat: cats()[0] || 'งานทั่วไป', desc: '', boq: '', weight: '', bs: '', bf: '' } }, n, iso(today()), {})); tb.lastElementChild.querySelector('.qdesc').focus(); }
     else if (a === 'bkClearProj') { if (await confirmBox('ล้างผลงานรวมระดับโครงการที่บันทึกย้อนหลังทั้งหมด? (ไม่กระทบผลงานรายรายการ)', 'ล้างค่า')) { S.P.actualSeries = []; await saveProject(); toast('ล้างแล้ว'); render(); } }
     else if (a === 'saveProj') { var box = $('#projFormBox'); readProjectForm(box, S.P); await saveProject(); toast('บันทึกแล้ว'); render(); }
     else if (a === 'archive') { S.P.archived = !S.P.archived; await saveProject(); toast(S.P.archived ? 'เก็บเข้าคลังแล้ว' : 'นำออกจากคลังแล้ว'); render(); }
@@ -1685,6 +1767,7 @@ window.addEventListener('hashchange', function () {
   Promise.all(pend).then(function () { S.dailyDraft = null; S.weekDraft = null; render(); window.scrollTo(0, 0); });
 });
 $('#brand').addEventListener('click', function () { go('/'); });
+$('#verBtn').textContent = 'v' + APP_VERSION; $('#verBtn').addEventListener('click', function () { openAbout(); });
 $('#syncBtn').addEventListener('click', function () { syncNow(true); });
 $('#installBtn').addEventListener('click', function () { doInstall().catch(function (e) { toast(e.message, true); }); });
 if (!isStandalone()) $('#installBtn').classList.remove('hidden');
@@ -1776,20 +1859,144 @@ async function createSample(kind) {
   toast('สร้างโครงการตัวอย่างแล้ว'); return pid;
 }
 
+/* ---------------- เวอร์ชันและการอัปเดตแอป ---------------- */
+var CHANGELOG = [
+  ['2.8.0', '18 ต.ค. 2569', ['แสดงเลขเวอร์ชันมุมขวาบน กดเพื่อตรวจหาอัปเดต/ดูสิ่งที่เปลี่ยน', 'แจ้งเตือนเมื่อมีเวอร์ชันใหม่ (ตรวจอัตโนมัติทุกครั้งที่เปิดแอปและทุก 30 นาที) พร้อมปุ่มอัปเดตทันที และปุ่ม "บังคับโหลดใหม่" ถ้าค้างเวอร์ชันเก่า',
+    'โหมดนำเสนอที่ประชุม (ภาพรวม › นำเสนอ) – สไลด์เต็มจอ: ข้อมูลโครงการ ตัวชี้วัด S-Curve ผลงานรายงวด รายงานส่วน/หมวด การเงิน ประเด็นติดตาม และรูปภาพ',
+    'ตารางกรอก % แต่ละรายการ: แสดงน้ำหนักที่คำนวณได้ เลือกงานส่วนของแถวที่เพิ่มได้ • ปุ่มลบข้อมูลบันทึกย้อนหลังทั้งหมด']],
+  ['2.7.3', '18 ต.ค. 2569', ['กรอก % ผลงานของแต่ละรายการเอง และสร้างรายการงานจากรายชื่องานส่วน']],
+  ['2.7.0', '18 ต.ค. 2569', ['Excel รองรับงานส่วน/หมวดงานอย่างละ 40', 'บันทึกผลงานย้อนหลังรายงวด', 'จัดระเบียบงานส่วนและหมวดงาน', 'ตารางความก้าวหน้ารายงวดในเอกสารสรุป']]
+];
+var UPD = { reg: null, remote: null, checked: null };
+function verCmp(a, b) { a = String(a || '0').split('.').map(Number); b = String(b || '0').split('.').map(Number); for (var i = 0; i < 3; i++) { if ((a[i] || 0) !== (b[i] || 0)) return (a[i] || 0) - (b[i] || 0); } return 0; }
+async function checkUpdate(manual) {
+  if (location.protocol === 'file:' || /claudeusercontent|claude\.ai/.test(location.host)) { if (manual) toast('หน้าทดลองนี้ไม่มีระบบอัปเดต'); return null; }
+  try {
+    if (UPD.reg) UPD.reg.update().catch(function () {});
+    var r = await fetch('version.json?t=' + Date.now(), { cache: 'no-store' }); if (!r.ok) throw new Error('HTTP ' + r.status);
+    var v = await r.json(); UPD.remote = v; UPD.checked = new Date();
+    if (verCmp(v.version, APP_VERSION) > 0) showUpdBar(v.version); else if (manual) toast('ใช้เวอร์ชันล่าสุดอยู่แล้ว (v' + APP_VERSION + ')');
+    return v;
+  } catch (e) { if (manual) toast('ตรวจหาอัปเดตไม่ได้ – ตรวจสอบอินเทอร์เน็ต (' + e.message + ')', true); return null; }
+}
+function showUpdBar(ver) {
+  var bar = $('#updBar'); if (!bar) { bar = document.createElement('div'); bar.id = 'updBar'; document.body.appendChild(bar); }
+  bar.innerHTML = '<span>มีเวอร์ชันใหม่' + (ver ? ' <b>v' + esc(ver) + '</b>' : '') + ' (ใช้อยู่ v' + APP_VERSION + ')</span><button class="btn sm acc" id="updGo">อัปเดตเดี๋ยวนี้</button><button class="btn sm ghost" id="updX" aria-label="ปิด">ภายหลัง</button>';
+  $('#updGo').onclick = applyUpdate; $('#updX').onclick = function () { bar.remove(); };
+  var vb = $('#verBtn'); if (vb) vb.classList.add('newver');
+}
+// อัปเดต: ถ้ามี service worker ใหม่รออยู่ให้สลับทันที ไม่เช่นนั้นล้างแคชไฟล์แอปแล้วโหลดใหม่ (ข้อมูลโครงการเก็บแยก ไม่หาย)
+async function applyUpdate() {
+  var bar = $('#updBar'); if (bar) bar.innerHTML = '<span><span class="spin"></span> กำลังอัปเดต…</span>';
+  try {
+    var reg = UPD.reg || (navigator.serviceWorker && await navigator.serviceWorker.getRegistration());
+    if (reg) { await reg.update().catch(function () {}); if (reg.waiting) { reg.waiting.postMessage('skipWaiting'); setTimeout(function () { location.reload(); }, 2500); return; } }
+  } catch (e) {}
+  await forceRefresh();
+}
+async function forceRefresh() {
+  try { if (window.caches) { var ks = await caches.keys(); await Promise.all(ks.filter(function (k) { return /^sc-/.test(k); }).map(function (k) { return caches.delete(k); })); } } catch (e) {}
+  try { if (navigator.serviceWorker) { var rs = await navigator.serviceWorker.getRegistrations(); await Promise.all(rs.map(function (r) { return r.unregister(); })); } } catch (e) {}
+  location.replace(location.pathname + '?v=' + Date.now() + location.hash);
+}
+function changelogHtml(n) {
+  return CHANGELOG.slice(0, n || CHANGELOG.length).map(function (c) { return '<h3 style="margin:10px 0 2px">v' + c[0] + ' <span class="muted" style="font-weight:400">' + c[1] + '</span></h3><ul style="margin:0;padding-left:22px">' + c[2].map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul>'; }).join('');
+}
+async function openAbout() {
+  var bg = modal('<h2>เวอร์ชันแอป</h2><div class="kpis">' + kpi('เวอร์ชันที่ใช้อยู่', 'v' + APP_VERSION, isStandalone() ? 'ติดตั้งเป็นแอป' : 'เปิดผ่านเบราว์เซอร์') +
+    kpi('เวอร์ชันล่าสุดบนเว็บ', '<span id="abRemote"><span class="spin"></span></span>', '<span id="abWhen">กำลังตรวจ…</span>') + '</div>' +
+    '<div class="row" style="margin-top:12px"><button class="btn" id="abCheck">ตรวจหาอัปเดต</button><button class="btn sec" id="abForce">บังคับโหลดเวอร์ชันล่าสุด</button></div>' +
+    '<p class="muted">"บังคับโหลด" ล้างเฉพาะไฟล์ของแอปที่เก็บไว้ แล้วดาวน์โหลดใหม่จากเว็บ – <b>ข้อมูลโครงการ รูป และการตั้งค่าไม่หาย</b> • ใช้เมื่อแอปไม่ยอมอัปเดต (หลังอัปโหลดไฟล์ใหม่ขึ้น GitHub อาจต้องรอ 1–10 นาที)</p>' +
+    '<h2 style="margin-top:14px">มีอะไรใหม่</h2>' + changelogHtml(4));
+  var fill = async function (manual) { var v = await checkUpdate(manual); var r = bg.querySelector('#abRemote'), w = bg.querySelector('#abWhen'); if (!r) return;
+    r.textContent = v ? 'v' + v.version : 'ตรวจไม่ได้'; w.textContent = v ? (verCmp(v.version, APP_VERSION) > 0 ? 'มีเวอร์ชันใหม่ – กดอัปเดตที่แถบด้านบน' : 'เป็นเวอร์ชันล่าสุดแล้ว') : 'ออฟไลน์หรือเปิดจากไฟล์'; };
+  bg.querySelector('#abCheck').onclick = function () { fill(true); };
+  bg.querySelector('#abForce').onclick = function () { forceRefresh(); };
+  fill(false);
+}
+function whatsNewOnce() {
+  try { var seen = localStorage.getItem('sc_seen_ver'); localStorage.setItem('sc_seen_ver', APP_VERSION);
+    if (seen && verCmp(APP_VERSION, seen) > 0) modal('<h2>อัปเดตเป็น v' + APP_VERSION + ' แล้ว</h2><p class="muted">จากเดิม v' + esc(seen) + ' • ข้อมูลทั้งหมดยังอยู่ครบ</p>' + changelogHtml(CHANGELOG.filter(function (c) { return verCmp(c[0], seen) > 0; }).length || 1));
+  } catch (e) {}
+}
+
+/* ---------------- โหมดนำเสนอที่ประชุม (สไลด์เต็มจอ) ---------------- */
+var PRES = { i: 0 };
+function presSlides() {
+  var p = S.P, d = today(), pl = planAt(d), ac = actualNow(), L = ldInfo(), el = Math.max(0, diffDays(d, projStart()) + 1), tot = projDur() + eotTotal(), rem = diffDays(projEnd(), d);
+  var sl = [], big = function (l, v, s, cls) { return '<div class="pk"><div class="l">' + l + '</div><div class="v ' + (cls || '') + '">' + v + '</div>' + (s ? '<div class="s">' + s + '</div>' : '') + '</div>'; };
+  var lg = logoSrc();
+  sl.push({ t: '', h: '<div class="ptitle">' + (lg ? '<img src="' + esc(lg) + '" alt="">' : '') + '<div class="pt1">รายงานความก้าวหน้าโครงการ</div><div class="pt2">' + esc(p.name) + '</div>' +
+    '<div class="pt3">' + esc([p.contract_no ? 'สัญญาเลขที่ ' + p.contract_no : '', p.contractor ? 'ผู้รับจ้าง ' + p.contractor : ''].filter(Boolean).join(' • ')) + '</div>' +
+    '<div class="pt3">ระยะเวลา ' + th(projStart()) + ' – ' + th(projEnd()) + ' (' + tot + ' วัน)' + (num(p.bac) ? ' • มูลค่า ' + money(num(p.bac) + voNet()) + ' บาท' : '') + '</div>' +
+    '<div class="pt4">ข้อมูล ณ วันที่ ' + th(d) + (p.supervisor_name ? ' • นำเสนอโดย ' + esc(p.supervisor_name) + ' ' + esc(p.supervisor_pos || '') : '') + '</div></div>' });
+  var st = spiState(ac, pl);
+  sl.push({ t: 'สรุปสถานะโครงการ', h: '<div class="pkpis">' + big('ผลงานตามแผน', pct(pl)) + big('ผลงานจริง', pct(ac), '', ac >= pl ? 'ok-t' : 'bad-t') +
+    big('เร็ว/ช้ากว่าแผน', (ac - pl >= 0 ? '+' : '') + pct(ac - pl), 'ประมาณ ' + (ac - pl >= 0 ? '+' : '') + Math.round((ac - pl) * projDur()) + ' วัน', ac >= pl ? 'ok-t' : 'bad-t') +
+    big('ระยะเวลาที่ใช้ไป', el + ' / ' + tot + ' วัน', pct(Math.min(1, el / tot), 1) + ' ของสัญญา') + big('วันคงเหลือ', rem >= 0 ? rem + ' วัน' : 'เลย ' + (-rem) + ' วัน', 'สิ้นสุด ' + th(projEnd(), true), rem < 0 ? 'bad-t' : '') +
+    big('คาดว่าแล้วเสร็จ', L.fEnd ? th(L.fEnd, true) : '-', L.fDelay ? 'ช้ากว่าสัญญา ' + L.fDelay + ' วัน' : 'ทันตามสัญญา', L.fDelay ? 'bad-t' : 'ok-t') + '</div>' +
+    '<div class="pstat">สถานะ: <b class="' + (st.k === 'ok' ? 'ok-t' : st.k === 'bad' ? 'bad-t' : 'warn-t') + '">' + esc(st.t) + '</b>' + (backHasData() ? ' • ผลงานช่วงก่อนหน้าบันทึกย้อนหลังจากเอกสาร' + (p.backSrc ? ' (' + esc(p.backSrc) + ')' : '') : '') + '</div>' });
+  sl.push({ t: 'S-Curve แผนงานเทียบผลงานจริง', h: '<div class="pchart"><canvas id="pcurve"></canvas></div>', chart: true });
+  var per = backPeriods('10d'), hist = histIndex(); if (per.length > 12) per = per.length > 30 ? backPeriods('m').slice(-12) : per.slice(-12);
+  if (per.length) sl.push({ t: 'ความก้าวหน้ารายงวด', h: '<table class="ptbl"><tr><th>งวด</th><th>สิ้นงวด</th><th class="num">แผนสะสม</th><th class="num">จริงในงวด</th><th class="num">จริงสะสม</th><th class="num">ผลต่าง</th></tr>' +
+    per.map(function (x) { var a = actualAt(x.e, hist), a0 = actualAt(addDays(x.s, -1), hist), pp = planAt(x.e), df = a - pp;
+      return '<tr><td>' + x.n + '</td><td>' + th(x.e, true) + '</td><td class="num">' + pct(pp) + '</td><td class="num">' + pct(a - a0) + '</td><td class="num"><b>' + pct(a) + '</b></td><td class="num ' + (df >= 0 ? 'ok-t' : 'bad-t') + '">' + (df >= 0 ? '+' : '') + pct(df) + '</td></tr>'; }).join('') + '</table>' });
+  var grp = function (title, list, key) {
+    var rows = list.map(function (n) { var g = groupStats(function (t) { return t[key] === n; }, d); return g ? { n: n, g: g } : null; }).filter(Boolean); if (!rows.length) return;
+    for (var k = 0; k < rows.length; k += 10) sl.push({ t: title + (rows.length > 10 ? ' (' + (k / 10 + 1) + '/' + Math.ceil(rows.length / 10) + ')' : ''), h: '<table class="ptbl"><tr><th>' + (key === 'part' ? 'งานส่วน' : 'หมวดงาน') + '</th><th class="num">น้ำหนัก</th><th style="width:34%">ความคืบหน้า</th><th class="num">แผน</th><th class="num">จริง</th><th>สถานะ</th></tr>' +
+      rows.slice(k, k + 10).map(function (r) { return '<tr><td>' + esc(r.n) + '</td><td class="num">' + pct(r.g.W, 1) + '</td><td><div class="pbar"><i style="width:' + Math.min(100, r.g.ac * 100) + '%"></i><b style="left:' + Math.min(100, r.g.pl * 100) + '%"></b></div></td><td class="num">' + pct(r.g.pl, 1) + '</td><td class="num"><b>' + pct(r.g.ac, 1) + '</b></td><td>' + badge(r.g.st) + '</td></tr>'; }).join('') + '</table><p class="pnote">แถบสีน้ำเงิน = ผลงานจริง • เส้นแดง = ตำแหน่งตามแผน ณ วันนี้</p>' });
+  };
+  if (isMulti()) grp('ความก้าวหน้ารายงานส่วน', parts(), 'part'); else grp('ความก้าวหน้ารายหมวดงาน', cats(), 'cat');
+  var ins = sortedInst();
+  if (num(p.bac) || ins.length) sl.push({ t: 'สัญญาและการเบิกจ่าย', h: '<div class="pkpis">' + big('มูลค่าสัญญาปัจจุบัน', money(num(p.bac) + voNet()), voNet() ? 'งานเพิ่ม-ลด ' + (voNet() > 0 ? '+' : '') + money(voNet()) : 'ตามสัญญาเดิม') +
+      big('ขยายเวลาที่อนุมัติ', eotTotal() + ' วัน') + big('ค่าปรับคาดการณ์', L.fLd == null || !L.fDelay ? '-' : money(L.fLd), L.fDelay ? 'วันละ ' + money(L.per) : '', L.fDelay ? 'bad-t' : '') + '</div>' +
+    (ins.length ? '<table class="ptbl"><tr><th>งวด</th><th>กำหนด</th><th class="num">จำนวนเงิน</th><th>สถานะ</th></tr>' + ins.slice(0, 10).map(function (i) { return '<tr><td>' + esc(i.no) + '</td><td>' + th(i.due, true) + '</td><td class="num">' + money(num(i.amount) + num(i.vo_amount)) + '</td><td>' + badge(instStatus(i)) + '</td></tr>'; }).join('') + '</table>' : '') });
+  var late = wbsList().filter(function (o) { return taskStatus(o.t).k === 'bad'; }).map(function (o) { return { o: o, gap: spanPct(D(o.t.bs), D(o.t.bf), d) - num(o.t.pct) / 100 }; }).sort(function (a, b) { return b.gap - a.gap; }).slice(0, 8);
+  var subs = S.submittals.filter(function (s) { var k = subRisk(s).k; return k === 'bad' || k === 'warn'; }).slice(0, 5);
+  if (late.length || subs.length) sl.push({ t: 'ประเด็นที่ต้องติดตาม', h: (late.length ? '<table class="ptbl"><tr><th>รายการที่ล่าช้า</th><th class="num">ควรได้</th><th class="num">จริง</th><th>กำหนดเสร็จ</th></tr>' + late.map(function (x) { var t = x.o.t; return '<tr><td>' + esc(t.desc) + '</td><td class="num">' + (spanPct(D(t.bs), D(t.bf), d) * 100).toFixed(0) + '%</td><td class="num bad-t">' + num(t.pct) + '%</td><td>' + th(t.rf || t.bf, true) + '</td></tr>'; }).join('') + '</table>' : '') +
+    (subs.length ? '<h3>วัสดุที่ต้องเร่งอนุมัติ</h3><ul>' + subs.map(function (s) { return '<li>' + esc(s.material) + ' – ' + esc(subRisk(s).t) + '</li>'; }).join('') + '</ul>' : '') });
+  var ph = S.files.filter(function (f) { return f.kind === 'daily' && f.mime !== 'application/pdf'; }).sort(function (a, b) { return a.ref < b.ref ? 1 : -1; }).slice(0, 6);
+  if (ph.length) sl.push({ t: 'ภาพความก้าวหน้าล่าสุด', h: '<div class="pphotos">' + ph.map(function (f) { return '<figure><img data-fimg="' + f.id + '" alt=""><figcaption>' + th(f.ref, true) + (f.caption ? ' • ' + esc(f.caption) : '') + '</figcaption></figure>'; }).join('') + '</div>' });
+  sl.push({ t: '', h: '<div class="ptitle"><div class="pt1">ขอบคุณครับ</div><div class="pt3">ข้อซักถาม / ข้อเสนอแนะ</div><div class="pt4">' + esc(p.name) + '</div></div>' });
+  return sl;
+}
+async function vPresent() {
+  var sl = presSlides(); PRES.i = Math.max(0, Math.min(PRES.i, sl.length - 1)); var s = sl[PRES.i], pid = S.P.id;
+  document.body.classList.add('presenting');
+  if (s.chart) after(function () { drawCurve($('#pcurve')); });
+  return '<div class="pres" id="pres"><div class="pslide">' + (s.t ? '<div class="phd"><h2>' + esc(s.t) + '</h2><span>' + esc(S.P.name) + '</span></div>' : '') + '<div class="pbody">' + s.h + '</div></div>' +
+    '<div class="pctl noprint"><button class="btn sm sec" data-pres="exit">' + ic('chevl') + 'ออก</button><button class="btn sm sec" data-pres="fs">เต็มจอ</button><span class="grow"></span>' +
+    '<button class="btn sm sec" data-pres="prev" ' + (PRES.i ? '' : 'disabled') + '>' + ic('chevl') + '</button><span class="pnum">' + (PRES.i + 1) + ' / ' + sl.length + '</span><button class="btn sm" data-pres="next" ' + (PRES.i < sl.length - 1 ? '' : 'disabled') + '>' + ic('chevr') + '</button></div></div>';
+}
+function presNav(a) {
+  if (a === 'exit') { document.body.classList.remove('presenting'); if (document.fullscreenElement) document.exitFullscreen().catch(function () {}); PRES.i = 0; return go('/p/' + S.P.id); }
+  if (a === 'fs') { var e = document.documentElement; if (document.fullscreenElement) document.exitFullscreen(); else if (e.requestFullscreen) e.requestFullscreen().catch(function () { toast('เบราว์เซอร์นี้ไม่รองรับเต็มจอ – ใช้ปุ่มเต็มจอของเบราว์เซอร์แทน'); }); return; }
+  PRES.i += a === 'next' ? 1 : -1; render();
+}
+document.addEventListener('keydown', function (e) {
+  if (!document.body.classList.contains('presenting') || $('.mbg')) return;
+  if (['ArrowRight', 'PageDown', ' '].indexOf(e.key) >= 0) { e.preventDefault(); if (!$('[data-pres=next]').disabled) presNav('next'); }
+  else if (['ArrowLeft', 'PageUp'].indexOf(e.key) >= 0) { e.preventDefault(); if (!$('[data-pres=prev]').disabled) presNav('prev'); }
+  else if (e.key === 'Escape' && !document.fullscreenElement) presNav('exit');
+});
+(function () { var x0 = null; document.addEventListener('touchstart', function (e) { if (document.body.classList.contains('presenting')) x0 = e.touches[0].clientX; }, { passive: true });
+  document.addEventListener('touchend', function (e) { if (x0 == null || !document.body.classList.contains('presenting')) return; var dx = e.changedTouches[0].clientX - x0; x0 = null;
+    if (Math.abs(dx) > 60) { var b = $('[data-pres=' + (dx < 0 ? 'next' : 'prev') + ']'); if (b && !b.disabled) presNav(dx < 0 ? 'next' : 'prev'); } }, { passive: true }); })();
+
 /* ---------------- START ---------------- */
 function registerSW() {
   if (!('serviceWorker' in navigator) || location.protocol === 'file:' || /claudeusercontent|claude\.ai/.test(location.host)) return;
-  navigator.serviceWorker.register('sw.js').then(function (reg) {
+  navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(function (reg) {
+    UPD.reg = reg;
+    if (reg.waiting && navigator.serviceWorker.controller) showUpdBar(UPD.remote && UPD.remote.version);
     reg.addEventListener('updatefound', function () {
       var nw = reg.installing; if (!nw) return;
-      nw.addEventListener('statechange', function () {
-        if (nw.state === 'installed' && navigator.serviceWorker.controller) {
-          var bn = document.createElement('div'); bn.className = 'toast'; bn.innerHTML = 'มีเวอร์ชันใหม่ <button class="btn sm" id="updNow" style="margin-left:8px">อัปเดต</button>'; document.body.appendChild(bn);
-          $('#updNow').onclick = function () { nw.postMessage('skipWaiting'); };
-        }
-      });
+      nw.addEventListener('statechange', function () { if (nw.state === 'installed' && navigator.serviceWorker.controller) showUpdBar(UPD.remote && UPD.remote.version); });
     });
   }).catch(function (e) { console.warn('SW', e); });
+  setInterval(function () { checkUpdate(false); }, 30 * 60 * 1000);
+  document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible' && (!UPD.checked || Date.now() - UPD.checked > 5 * 60 * 1000)) checkUpdate(false); });
+  setTimeout(function () { checkUpdate(false); }, 3000);
   // โหลดหน้าใหม่เฉพาะเมื่อ "อัปเดตจากเวอร์ชันเดิม" (ไม่โหลดใหม่ตอนติดตั้งครั้งแรก เพื่อไม่ให้ข้อมูลที่กำลังกรอกหาย)
   var hadController = !!navigator.serviceWorker.controller, reloaded = false;
   navigator.serviceWorker.addEventListener('controllerchange', function () { if (hadController && !reloaded) { reloaded = true; location.reload(); } });
@@ -1803,6 +2010,7 @@ function registerSW() {
   try { if (document.fonts && document.fonts.load) await Promise.race([document.fonts.load("20px THSarabunPSK"), new Promise(function (r) { setTimeout(r, 1500); })]); } catch (e) {}
   S.logoCfg = (await meta('logo')) || {};
   await render();
+  whatsNewOnce();
   syncBadge(); outboxAll().then(function (a) { SYNC.pending = a.length; syncBadge(); }).catch(function () {}); scheduleSync(1200);
 })();
 
