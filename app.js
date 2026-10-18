@@ -2,11 +2,11 @@
    คุมงานก่อสร้าง (PWA) — ใช้งานคนเดียว ข้อมูลเก็บในเครื่อง (IndexedDB)
    ===================================================================== */
 'use strict';
-var APP_VERSION = '2.8.0';
+var APP_VERSION = '2.9.0';
 
 /* ---------------- IndexedDB ---------------- */
-var DB_NAME = 'sitecontrol', DB_VER = 4;
-var STORES = ['projects', 'tasks', 'progress', 'daily', 'weekly', 'submittals', 'files', 'meta', 'installments', 'vos', 'eots', 'docs'];
+var DB_NAME = 'sitecontrol', DB_VER = 5;
+var STORES = ['projects', 'tasks', 'progress', 'daily', 'weekly', 'submittals', 'files', 'meta', 'installments', 'vos', 'eots', 'docs', 'drawings', 'punches'];
 var _db = null;
 function openDB() {
   if (_db) return Promise.resolve(_db);
@@ -21,9 +21,10 @@ function openDB() {
       });
       if (!db.objectStoreNames.contains('outbox')) db.createObjectStore('outbox', { keyPath: 'k' }); // คิวรอซิงก์
     };
-    r.onsuccess = function () { _db = r.result; res(_db); };
+    r.onsuccess = function () { _db = r.result; _db.onversionchange = function () { try { _db.close(); } catch (e) {} _db = null; location.reload(); }; res(_db); };
     r.onerror = function () { rej(r.error); };
-    r.onblocked = function () { rej(new Error('ฐานข้อมูลถูกใช้งานในแท็บอื่น กรุณาปิดแท็บอื่นของแอปก่อน')); };
+    // มีหน้าต่างอื่นของแอป (เวอร์ชันเก่า) เปิดอยู่ – รอให้ปิด ไม่ยกเลิกการเปิดฐานข้อมูล
+    r.onblocked = function () { var m = document.getElementById('main'); if (m) m.innerHTML = '<div class="card"><h2>กำลังอัปเกรดฐานข้อมูล</h2><p>มีหน้าต่างหรือแท็บอื่นของแอปเปิดอยู่ – กรุณาปิดหน้าต่างอื่นทั้งหมด แล้วหน้านี้จะเปิดต่อเอง</p></div>'; };
   });
 }
 function tx(store, mode, fn) {
@@ -249,11 +250,12 @@ function pageHead(title, sub, actions) {
 /* ---------------- routing & shell ---------------- */
 function go(path) { if (location.hash !== '#' + path) location.hash = path; else render(); }
 function parseRoute() { return (location.hash.replace(/^#\/?/, '') || '').split('/').filter(Boolean).map(decodeURIComponent); }
-var NAV_P = [['dash', 'dash', 'ภาพรวมโครงการ', 'ภาพรวม'], ['tasks', 'list', 'แผนงานและผลงาน', 'ผลงาน'], ['daily', 'day', 'รายงานประจำวัน', 'รายวัน'], ['weekly', 'week', 'รายงานรายสัปดาห์', 'สัปดาห์'], ['mat', 'box', 'ขออนุมัติวัสดุ', 'วัสดุ'], ['fin', 'money', 'สัญญาและการเงิน', 'สัญญา']];
+var NAV_P = [['dash', 'dash', 'ภาพรวมโครงการ', 'ภาพรวม'], ['tasks', 'list', 'แผนงานและผลงาน', 'ผลงาน'], ['daily', 'day', 'รายงานประจำวัน', 'รายวัน'], ['weekly', 'week', 'รายงานรายสัปดาห์', 'สัปดาห์'], ['mat', 'box', 'ขออนุมัติวัสดุ', 'วัสดุ'], ['punch', 'check', 'ตรวจงาน / จุดบกพร่อง', 'ตรวจงาน'], ['fin', 'money', 'สัญญาและการเงิน', 'สัญญา']];
 function renderNav() {
   var r = S.route, inP = r[0] === 'p' && S.P, cur = inP ? (r[2] || 'dash') : (r[0] || 'home');
   if (cur === 'print') cur = { mat: 'mat', pay: 'fin' }[r[3]] || r[3];
-  if (cur === 'back') cur = 'tasks';
+  if (cur === 'back' || cur === 'cpm') cur = 'tasks';
+  if (cur === 'print' && r[3] === 'punch') cur = 'punch';
   var items = inP ? NAV_P.map(function (n) { return ['/p/' + S.P.id + (n[0] === 'dash' ? '' : '/' + n[0]), n[1], n[2], n[0], n[3]]; })
     : [['/', 'folder', 'โครงการทั้งหมด', 'home', 'โครงการ'], ['/app', 'settings', 'ตั้งค่าและสำรองข้อมูล', 'app', 'ตั้งค่า']];
   var btn = function (n, short) { return '<button data-go="' + esc(n[0]) + '" class="' + (cur === n[3] ? 'on' : '') + '"' + (cur === n[3] ? ' aria-current="page"' : '') + '>' + ic(n[1]) + '<span>' + esc(short ? n[4] || n[2] : n[2]) + '</span></button>'; };
@@ -275,7 +277,7 @@ async function render() {
       if (!S.P || S.P.id !== r[1]) await loadProject(r[1]);
       if (!S.P) { go('/'); return; }
       var v = r[2] || 'dash';
-      var views = { dash: vDash, tasks: vTasks, back: vBack, present: vPresent, daily: vDaily, weekly: vWeekly, mat: vMat, fin: vFin, set: vProjSet, print: vPrint };
+      var views = { dash: vDash, tasks: vTasks, back: vBack, present: vPresent, cpm: vCpm, punch: vPunch, daily: vDaily, weekly: vWeekly, mat: vMat, fin: vFin, set: vProjSet, print: vPrint };
       renderNav();
       m.innerHTML = await (views[v] || vDash)(r.slice(3));
     } else {
@@ -290,8 +292,9 @@ function after(fn) { _after.push(fn); }
 function afterRender() { var q = _after; _after = []; q.forEach(function (f) { try { f(); } catch (e) { console.error(e); } }); hydrateImgs(); }
 async function loadProject(id) {
   var p = await DB.get('projects', id); S.P = p || null; if (!p) return;
-  var res = await Promise.all(['tasks', 'progress', 'daily', 'weekly', 'submittals', 'files', 'installments', 'vos', 'eots', 'docs'].map(function (s) { return DB.byProject(s, id); }));
+  var res = await Promise.all(['tasks', 'progress', 'daily', 'weekly', 'submittals', 'files', 'installments', 'vos', 'eots', 'docs', 'drawings', 'punches'].map(function (s) { return DB.byProject(s, id); }));
   S.tasks = res[0]; S.progress = res[1]; S.daily = res[2]; S.weekly = res[3]; S.submittals = res[4]; S.files = res[5]; S.installments = res[6]; S.vos = res[7]; S.eots = res[8]; S.docs = res[9];
+  S.drawings = res[10].sort(function (a, b) { return num(a.order) - num(b.order); }); S.punches = res[11];
   Object.keys(S.urls).forEach(function (k) { URL.revokeObjectURL(S.urls[k]); }); S.urls = {};
 }
 async function saveProject() { S.P.updated = new Date().toISOString(); await DB.put('projects', S.P); }
@@ -402,7 +405,7 @@ async function vHome() {
   S.projects.forEach(function (p) { p._eots = allEots.filter(function (e) { return e.projectId === p.id; }); });
   var h = '';
   var old = !lastBk || diffDays(today(), D(lastBk.slice(0, 10))) >= 7;
-  if (S.projects.length && old) h += '<div class="banner warn"><span class="grow">' + (lastBk ? 'สำรองข้อมูลครั้งล่าสุด ' + th(lastBk.slice(0, 10), true) : 'ยังไม่เคยสำรองข้อมูล') + ' – ข้อมูลอยู่ในเครื่องนี้เท่านั้น ควรสำรองสัปดาห์ละครั้ง</span><button class="btn sm acc" data-act="backup">สำรองเดี๋ยวนี้</button></div>';
+  if (S.projects.length) h += await dataSafetyBanner(); else if ((await syncCfg()) == null && !aiSandboxed()) h += '<div class="banner info"><span class="grow">เคยใช้แอปนี้และข้อมูลหายไป? ถ้าเคยเปิดซิงก์ ให้เชื่อมต่อซิงก์อีกครั้งเพื่อดึงข้อมูลกลับ หรือกู้คืนจากไฟล์สำรอง</span><button class="btn sm" data-go="/app">ซิงก์ / กู้คืนข้อมูล</button></div>';
   h = pageHead('โครงการทั้งหมด', S.projects.filter(function (p) { return !p.archived; }).length + ' โครงการที่กำลังดำเนินการ • ข้อมูลเก็บในเครื่องนี้', '<button class="btn sec" data-act="importXlsx">' + ic('upload') + 'นำเข้าจาก Excel</button><button class="btn" data-act="newProject">' + ic('plus') + 'โครงการใหม่</button>') + h;
   if (!S.projects.length) return h + '<div class="card empty"><div style="font-size:53px"></div><p><b>ยังไม่มีโครงการ</b></p><p>เริ่มจากสร้างโครงการใหม่ นำเข้าจากไฟล์ Excel v4 ที่มีอยู่ หรือลองโครงการตัวอย่างเพื่อดูการทำงาน</p>' +
     '<div class="row" style="justify-content:center"><button class="btn" data-act="newProject">' + ic('plus') + 'โครงการใหม่</button><button class="btn sec" data-act="samples">ลองโครงการตัวอย่าง 3 แบบ</button></div></div>' + installCard();
@@ -564,7 +567,7 @@ async function vDash() {
   var behind = S.tasks.filter(function (t) { return taskStatus(t).k === 'bad'; });
   var risk = S.submittals.filter(function (s) { var k = subRisk(s).k; return k === 'bad' || k === 'warn'; }).length;
   var todayRep = S.daily.filter(function (x) { return x.date === iso(d); })[0];
-  var h = '';
+  var h = await dataSafetyBanner();
   if (diffDays(d, projStart()) > 20 && !backHasData() && !S.progress.some(function (x) { return x.date < iso(addDays(d, -14)); }))
     h += '<div class="banner warn"><span class="grow">โครงการเริ่มมาแล้ว ' + diffDays(d, projStart()) + ' วัน แต่ยังไม่มีประวัติผลงานช่วงที่ผ่านมา – กราฟ S-Curve จะเริ่มจาก 0% • บันทึกผลงานสะสมรายงวดย้อนหลังจากเอกสารผู้รับจ้าง/ใบตรวจรับ เพื่อให้กราฟและรายงานถูกต้อง</span><button class="btn sm" data-go="/p/' + pid + '/back">บันทึกผลงานย้อนหลัง</button></div>';
   if (!todayRep && d >= projStart() && d <= addDays(projEnd(), 60)) h += '<div class="banner info"><span class="grow">ยังไม่ได้บันทึกรายงานประจำวันของวันนี้</span><button class="btn sm" data-go="/p/' + pid + '/daily/' + iso(d) + '">บันทึกเลย</button></div>';
@@ -586,6 +589,9 @@ async function vDash() {
   h += '<div class="card"><h2>S-Curve แผนเทียบผลงานจริง</h2><div class="chartbox"><canvas id="curve" aria-label="กราฟ S-Curve"></canvas></div>' +
     '<p class="muted">เส้นผลงานจริงสร้างจากประวัติการอัปเดต % ของแต่ละรายการโดยอัตโนมัติ' + (backHasData() ? ' • มีข้อมูลบันทึกย้อนหลัง' + (S.P.backSrc ? ' (อ้างอิง: ' + esc(S.P.backSrc) + ')' : '') + ' <a href="#/p/' + pid + '/back">ดู/แก้ไข</a>' : ' • <a href="#/p/' + pid + '/back">บันทึกผลงานย้อนหลัง</a>') + '</p></div>';
   after(function () { drawCurve($('#curve')); });
+  h += cpmDashCard();
+  var openPu = (S.punches || []).filter(function (x) { return x.status !== 'ปิดแล้ว'; });
+  if (openPu.length) h += '<div class="banner info"><span class="grow">จุดบกพร่องที่ยังไม่ปิด <b>' + openPu.length + '</b> จุด' + (openPu.filter(function (x) { return x.due && D(x.due) < d; }).length ? ' • <b class="bad-t">เกินกำหนดแก้ ' + openPu.filter(function (x) { return x.due && D(x.due) < d; }).length + ' จุด</b>' : '') + '</span><button class="btn sm sec" data-go="/p/' + pid + '/punch">ดูรายการ</button></div>';
   if (isMulti()) {
     h += '<div class="card"><h2>ความก้าวหน้ารายงานส่วน</h2><div class="tw"><table><tr><th>งานส่วน</th><th class="num">น้ำหนัก</th><th class="hide-m">ช่วงแผน</th><th class="num">แผน</th><th class="num">จริง</th><th class="num">SPI</th><th>สถานะ</th></tr>';
     parts().forEach(function (p) { var g = groupStats(function (t) { return t.part === p; }, d); if (!g) return;
@@ -632,7 +638,7 @@ function drawCurve(canvas, upTo) {
 var TF = { part: '', st: '', q: '' };
 async function vTasks() {
   var pid = S.P.id, d = today(), w = weightFn();
-  var h = pageHead('แผนงานและผลงาน', S.tasks.length + ' รายการ • ผลงานรวม ' + pct(actualNow()) + ' • แผน ' + pct(planAt(d)), '<button class="btn sec" data-go="/p/' + pid + '/back">' + ic('edit') + 'บันทึกย้อนหลัง</button><button class="btn sec" data-act="pasteTasks">' + ic('upload') + 'วางจาก Excel</button><button class="btn" data-task="">' + ic('plus') + 'เพิ่มรายการ</button>') +
+  var h = pageHead('แผนงานและผลงาน', S.tasks.length + ' รายการ • ผลงานรวม ' + pct(actualNow()) + ' • แผน ' + pct(planAt(d)), '<button class="btn sec" data-go="/p/' + pid + '/cpm">' + ic('list') + 'ลำดับงาน / สายงานวิกฤต</button><button class="btn sec" data-go="/p/' + pid + '/back">' + ic('edit') + 'บันทึกย้อนหลัง</button><button class="btn sec" data-act="pasteTasks">' + ic('upload') + 'วางจาก Excel</button><button class="btn" data-task="">' + ic('plus') + 'เพิ่มรายการ</button>') +
     '<div class="card"><div class="row"><input class="i grow" id="tq" placeholder="ค้นหารายการงาน…" value="' + esc(TF.q) + '" style="max-width:340px">' +
     '<div class="chips">' + [['', 'ทั้งหมด'], ['active', 'กำลังทำ'], ['bad', 'ล่าช้า'], ['todo', 'ยังไม่เริ่ม'], ['done', 'เสร็จ']].map(function (x) {
       return '<button class="chip' + (TF.st === x[0] ? ' on' : '') + '" data-tf="' + x[0] + '">' + x[1] + '</button>'; }).join('') + '</div></div>' +
@@ -1021,6 +1027,289 @@ function orgParts() {
     }, 'บันทึก', true);
 }
 
+/* ---------------- ลำดับงานต่อเนื่อง (Predecessor) และสายงานวิกฤต (Critical Path) ---------------- */
+// t.pred = [{ id, lag }] • ความสัมพันธ์แบบ เสร็จ→เริ่ม (FS) นับเป็นวันปฏิทิน • lag = จำนวนวันเว้นหลังงานก่อนหน้าเสร็จ
+function predsOf(t) { return (t.pred || []).filter(function (p) { return p && taskById(p.id); }); }
+function hasLogic() { return S.tasks.some(function (t) { return predsOf(t).length; }); }
+function topoOrder(tasks) {
+  var ids = {}, indeg = {}, succ = {}, out = [], q = [];
+  tasks.forEach(function (t) { ids[t.id] = t; indeg[t.id] = 0; succ[t.id] = []; });
+  tasks.forEach(function (t) { predsOf(t).forEach(function (p) { if (!ids[p.id]) return; indeg[t.id]++; succ[p.id].push({ id: t.id, lag: num(p.lag) }); }); });
+  tasks.forEach(function (t) { if (!indeg[t.id]) q.push(t.id); });
+  while (q.length) { var id = q.shift(); out.push(ids[id]); succ[id].forEach(function (s) { if (--indeg[s.id] === 0) q.push(s.id); }); }
+  return { order: out, succ: succ, cycle: out.length < tasks.length ? tasks.filter(function (t) { return indeg[t.id] > 0; }) : [] };
+}
+// คำนวณ: วันเผื่อ (Total Float) จากแผน และวันคาดว่าเสร็จ (Forecast) จากผลงานจริง + ลำดับงาน
+function cpm() {
+  var tasks = S.tasks.filter(function (t) { return D(t.bs) && D(t.bf); }), T = topoOrder(tasks), d = today(), end = projEnd(), R = {};
+  if (T.cycle.length) return { cycle: T.cycle, rows: {}, order: [], finish: null };
+  tasks.forEach(function (t) { var bs = D(t.bs), bf = D(t.bf); R[t.id] = { t: t, bs: bs, bf: bf, dur: diffDays(bf, bs) + 1 }; });
+  // ย้อนกลับ: วันเสร็จช้าสุดที่ยอมได้ (LF) โดยไม่ทำให้วันแล้วเสร็จตามแผนของโครงการเลื่อน
+  var pf = tasks.reduce(function (a, t) { return R[t.id].bf > a ? R[t.id].bf : a; }, projStart());
+  for (var i = T.order.length - 1; i >= 0; i--) {
+    var t = T.order[i], r = R[t.id], lf = pf;
+    T.succ[t.id].forEach(function (s) { var rs = R[s.id]; var ls = addDays(rs.lf, -(rs.dur - 1)); var x = addDays(ls, -(s.lag + 1)); if (x < lf) lf = x; });
+    r.lf = lf; r.float = diffDays(lf, r.bf);
+  }
+  // เดินหน้า: คาดการณ์วันเริ่ม/เสร็จ
+  var finish = projStart();
+  T.order.forEach(function (t) {
+    var r = R[t.id], p = num(t.pct);
+    if (t.af || p >= 100) { r.ef = D(t.af) || r.bf; r.es = D(t.as) || r.bs; r.state = 'done'; }
+    else if (t.as || p > 0) { var rem = Math.ceil(r.dur * (1 - p / 100)); r.es = D(t.as) || r.bs; r.ef = addDays(d, Math.max(0, rem - 1)); if (r.ef < d) r.ef = d; r.state = 'active'; }
+    else {
+      var es = r.bs < d ? d : r.bs;
+      predsOf(t).forEach(function (pp) { var pr = R[pp.id]; if (pr && pr.ef) { var x = addDays(pr.ef, num(pp.lag) + 1); if (x > es) es = x; } });
+      r.es = es; r.ef = addDays(es, r.dur - 1); r.state = 'todo';
+    }
+    r.slip = Math.max(0, diffDays(r.ef, r.bf)); r.impact = r.state === 'done' ? 0 : Math.max(0, diffDays(r.ef, r.lf));
+    if (r.ef > finish) finish = r.ef;
+  });
+  var rows = T.order.map(function (t) { return R[t.id]; });
+  rows.forEach(function (r) { r.crit = r.state !== 'done' && r.float <= 0; r.near = r.state !== 'done' && !r.crit && r.float <= 7; });
+  return { rows: R, order: rows, finish: finish, delay: Math.max(0, diffDays(finish, end)), end: end, pf: pf, buffer: diffDays(end, pf), cycle: [] };
+}
+function cpmBadge(r) { return r.state === 'done' ? badge({ k: 'ok', t: 'เสร็จแล้ว' }) : r.impact > 0 ? badge({ k: 'bad', t: 'ทำให้เสร็จช้า +' + r.impact + ' วัน' }) : r.crit ? badge({ k: 'bad', t: 'วิกฤต – ห้ามช้า' }) : r.near ? badge({ k: 'warn', t: 'ใกล้วิกฤต' }) : badge({ k: 'na', t: 'มีวันเผื่อ' }); }
+function predText(t, codes) { return predsOf(t).map(function (p) { return (codes[p.id] || '?') + (num(p.lag) ? (num(p.lag) > 0 ? '+' : '') + num(p.lag) : ''); }).join(', '); }
+function parsePred(txt, selfId, byCode) {
+  var out = [], bad = [];
+  String(txt || '').split(/[,;\s]+/).filter(Boolean).forEach(function (s) {
+    var m = /^([\d.]+?)(?:([+-]\d+))?$/.exec(s.trim()); var id = m && byCode[m[1]];
+    if (!id || id === selfId) bad.push(s); else if (!out.some(function (o) { return o.id === id; })) out.push({ id: id, lag: m[2] ? +m[2] : 0 });
+  });
+  return { list: out, bad: bad };
+}
+var CPF = { show: 'all' };
+async function vCpm() {
+  var pid = S.P.id, L = wbsList(), codes = {}, byCode = {}; L.forEach(function (o) { codes[o.t.id] = o.wbs; byCode[o.wbs] = o.t.id; });
+  var C = cpm(), logic = hasLogic(), d = today();
+  var h = pageHead('ลำดับงานและสายงานวิกฤต', 'กำหนดว่างานไหนต้องรองานไหนเสร็จก่อน แล้วระบบหางานที่ห้ามช้า และคาดการณ์วันแล้วเสร็จของโครงการ',
+    '<button class="btn sec" data-go="/p/' + pid + '/tasks">' + ic('chevl') + 'กลับหน้าผลงาน</button>');
+  if (!S.tasks.length) return h + '<div class="card empty">ยังไม่มีรายการงาน</div>';
+  if (C.cycle.length) h += '<div class="banner bad"><span class="grow"><b>ลำดับงานวนเป็นวงกลม</b> (งานรอกันเอง) ที่: ' + C.cycle.slice(0, 5).map(function (t) { return esc(codes[t.id] + ' ' + t.desc); }).join(', ') + ' – แก้ช่อง "งานก่อนหน้า" ด้านล่าง</span></div>';
+  else {
+    var crit = C.order.filter(function (r) { return r.crit; }), hit = C.order.filter(function (r) { return r.impact > 0; });
+    h += '<div class="card"><div class="kpis">' + kpi('สิ้นสุดสัญญา (รวมขยายเวลา)', th(C.end, true), 'แผนงานเสร็จ ' + th(C.pf, true) + (C.buffer > 0 ? ' (เผื่อ ' + C.buffer + ' วัน)' : C.buffer < 0 ? ' (แผนเกินสัญญา ' + (-C.buffer) + ' วัน)' : '')) +
+      kpi('คาดว่าแล้วเสร็จ', th(C.finish, true), logic ? 'ตามลำดับงานและผลงานจริง' : 'ยังไม่ได้กำหนดลำดับงาน', C.delay ? 'bad-t' : 'ok-t') +
+      kpi('ล่าช้ากว่าสัญญา', C.delay ? C.delay + ' วัน' : 'ไม่ล่าช้า', C.delay ? 'ค่าปรับประมาณ ' + money(C.delay * ldInfo().per) + ' บาท' : '', C.delay ? 'bad-t' : 'ok-t') +
+      kpi('งานวิกฤต (ห้ามช้า)', crit.length + ' รายการ', 'วันเผื่อ ≤ 0 วัน', crit.length ? 'warn-t' : '') + kpi('งานที่ทำให้เสร็จช้า', hit.length + ' รายการ', hit.length ? 'ต้องเร่งรัด' : 'ไม่มี', hit.length ? 'bad-t' : 'ok-t') + '</div>' +
+      (!logic ? '<div class="banner info" style="margin:12px 0 0"><span class="grow">ยังไม่ได้กำหนดลำดับงาน – ตอนนี้แต่ละงานถูกคิดแยกกัน (งานที่ห้ามช้าคืองานที่แผนเสร็จชนวันสิ้นสุดสัญญา) • กด "แนะนำลำดับงาน" ให้ระบบเสนอจากวันที่ในแผน แล้วตรวจแก้ก่อนบันทึก</span><button class="btn sm" data-act="cpmSuggest">แนะนำลำดับงาน</button></div>' : '') +
+      '<p class="muted" style="margin:10px 0 0"><b>วันเผื่อ (Float)</b> = งานนี้เลื่อนได้กี่วันโดยไม่ทำให้โครงการเสร็จช้ากว่าแผน • <b>วิกฤต</b> = วันเผื่อ 0 หรือติดลบ ช้าวันเดียวโครงการช้าตาม • คาดการณ์จาก % ผลงานจริง: งานที่ทำอยู่ใช้ความเร็วตามแผนกับงานที่เหลือ งานที่ยังไม่เริ่มเริ่มได้หลังงานก่อนหน้าเสร็จ</p></div>';
+    h += cpmGantt(C, codes);
+  }
+  var rows = C.cycle.length ? L.map(function (o) { return { t: o.t }; }) : C.order.slice().sort(function (a, b) { return L.findIndex(function (o) { return o.t.id === a.t.id; }) - L.findIndex(function (o) { return o.t.id === b.t.id; }); });
+  if (CPF.show === 'crit' && !C.cycle.length) rows = rows.filter(function (r) { return r.crit || r.impact > 0; });
+  h += '<div class="card"><div class="card-h"><h2>ตารางลำดับงาน</h2><div class="chips">' + [['all', 'ทั้งหมด'], ['crit', 'เฉพาะงานวิกฤต/กระทบ']].map(function (x) { return '<button class="chip' + (CPF.show === x[0] ? ' on' : '') + '" data-act="cpmShow" data-v="' + x[0] + '">' + x[1] + '</button>'; }).join('') + '</div></div>' +
+    '<p class="muted">ช่อง <b>งานก่อนหน้า</b>: ใส่รหัส WBS ของงานที่ต้องเสร็จก่อนงานนี้จะเริ่มได้ คั่นด้วยจุลภาค เช่น <code>1.1.01, 1.2.03</code> • ต้องเว้นวันหลังงานก่อนหน้าเสร็จ (เช่น บ่มคอนกรีต 7 วัน) ใส่ <code>1.2.03+7</code> • เริ่มได้ก่อนงานก่อนหน้าเสร็จ (ทำซ้อนกัน) ใส่ค่าติดลบ เช่น <code>1.2.03-5</code> = เริ่มก่อนงานนั้นเสร็จ 5 วัน</p>' +
+    '<div class="tw bkgrid"><table class="tbl" id="cpmTbl"><thead><tr><th class="bkfix">รายการงาน</th><th>แผน</th><th style="min-width:170px">งานก่อนหน้า</th><th class="num">วันเผื่อ</th><th>คาดว่าเสร็จ</th><th>สถานะ</th></tr></thead><tbody>' +
+    rows.map(function (r) { var t = r.t; return '<tr><td class="bkfix"><span class="muted">' + esc(codes[t.id]) + '</span> ' + esc(t.desc) + '<div class="muted" style="font-size:14px">ผลงาน ' + num(t.pct) + '%</div></td>' +
+      '<td style="white-space:nowrap">' + th(t.bs, true) + ' – ' + th(t.bf, true) + '</td><td><input class="i" data-pred="' + t.id + '" value="' + esc(predText(t, codes)) + '" placeholder="-"></td>' +
+      '<td class="num ' + (r.float == null ? '' : r.float <= 0 ? 'bad-t' : r.float <= 7 ? 'warn-t' : '') + '">' + (r.float == null || r.state === 'done' ? '-' : r.float + ' วัน') + '</td>' +
+      '<td style="white-space:nowrap" class="' + (r.slip ? 'bad-t' : '') + '">' + (r.ef ? th(r.ef, true) + (r.slip ? ' (+' + r.slip + ')' : '') : '-') + '</td><td>' + (r.state ? cpmBadge(r) : '') + '</td></tr>'; }).join('') +
+    '</tbody></table></div><div class="row" style="margin-top:10px"><button class="btn" data-act="cpmSave">' + ic('check') + 'บันทึกลำดับงาน</button>' + (logic ? '<button class="btn ghost bad-t" data-act="cpmClear">ล้างลำดับงานทั้งหมด</button>' : '') + '</div></div>';
+  return h;
+}
+function cpmGantt(C, codes) {
+  var rows = C.order.filter(function (r) { return CPF.show !== 'crit' || r.crit || r.impact > 0; }); if (!rows.length) return '';
+  var s = projStart(), e = [C.end, C.finish].concat(rows.map(function (r) { return r.ef; })).reduce(function (a, b) { return b > a ? b : a; }, C.end), span = Math.max(1, diffDays(e, s) + 1), pos = function (x) { return (Math.max(0, diffDays(x, s)) / span * 100).toFixed(2); };
+  var wid = function (a, b) { return Math.max(0.4, (diffDays(b, a) + 1) / span * 100).toFixed(2); }, months = [], m = new Date(s.getFullYear(), s.getMonth(), 1);
+  while (m <= e) { if (m >= s) months.push(m); m = new Date(m.getFullYear(), m.getMonth() + 1, 1); }
+  rows = rows.slice().sort(function (a, b) { return a.bs - b.bs; });
+  return '<div class="card"><h2>แผนภูมิแท่ง (Gantt) – แผนเทียบคาดการณ์</h2><div class="gantt"><div class="gh"><div class="gl"></div><div class="gt">' + months.map(function (x) { return '<span style="left:' + pos(x) + '%">' + th(x, true).replace(/^\d+ /, '') + '</span>'; }).join('') + '</div></div>' +
+    rows.map(function (r) { return '<div class="gr' + (r.crit ? ' crit' : '') + '"><div class="gl" title="' + esc(r.t.desc) + '"><span class="muted">' + esc(codes[r.t.id]) + '</span> ' + esc(r.t.desc) + '</div><div class="gt">' +
+      '<i class="gp" style="left:' + pos(r.bs) + '%;width:' + wid(r.bs, r.bf) + '%"></i>' + (r.es && r.ef ? '<i class="gf ' + (r.impact > 0 ? 'late' : r.state === 'done' ? 'done' : r.crit ? 'crit' : '') + '" style="left:' + pos(r.es) + '%;width:' + wid(r.es, r.ef) + '%"></i>' : '') + '</div></div>'; }).join('') +
+    '<div class="gline today" style="left:calc(var(--gl) + (100% - var(--gl)) * ' + (pos(today()) / 100) + ')" title="วันนี้"></div><div class="gline end" style="left:calc(var(--gl) + (100% - var(--gl)) * ' + (pos(C.end) / 100) + ')" title="สิ้นสุดสัญญา"></div></div>' +
+    '<p class="muted"><span class="glg gp"></span> แผนตามสัญญา <span class="glg gf"></span> คาดการณ์ <span class="glg gf crit"></span> งานวิกฤต <span class="glg gf late"></span> ทำให้โครงการช้า <span class="glg gf done"></span> เสร็จแล้ว • เส้นน้ำเงิน = วันนี้ • เส้นแดง = สิ้นสุดสัญญา</p></div>';
+}
+async function cpmSave() {
+  var byCode = {}; wbsList().forEach(function (o) { byCode[o.wbs] = o.t.id; });
+  var bad = [], ch = [];
+  $$('[data-pred]').forEach(function (el) { var t = taskById(el.dataset.pred), r = parsePred(el.value, t.id, byCode); if (r.bad.length) bad.push(el.value);
+    var a = JSON.stringify(predsOf(t)), b = JSON.stringify(r.list); if (a !== b) { t._oldPred = t.pred; t.pred = r.list; ch.push(t); } });
+  if (bad.length) throw new Error('รหัส WBS ไม่ถูกต้อง: ' + bad.slice(0, 3).join(' | ') + ' – ใช้รหัสตามหน้าผลงาน เช่น 1.2.03 หรือ 1.2.03+7');
+  var keep = ch.map(function (t) { return { t: t, p: t.pred }; });
+  if (topoOrder(S.tasks).cycle.length) { ch.forEach(function (t) { t.pred = t._oldPred; }); throw new Error('ลำดับงานวนเป็นวงกลม (งาน A รอ B และ B รอ A) – ตรวจแก้แล้วบันทึกอีกครั้ง'); }
+  ch.forEach(function (t) { delete t._oldPred; });
+  for (var i = 0; i < keep.length; i++) { keep[i].t.updated = new Date().toISOString(); await DB.put('tasks', keep[i].t); }
+  toast(ch.length ? 'บันทึกลำดับงานแล้ว (' + ch.length + ' รายการ)' : 'ไม่มีการเปลี่ยนแปลง'); render();
+}
+// เสนอลำดับงานจากวันที่ในแผน: ในงานส่วนเดียวกัน งานที่เสร็จก่อน/ใกล้วันเริ่มของงานนี้มากที่สุด (เริ่มก่อนและเสร็จไม่หลังงานนี้)
+// ถ้าแผนให้ทำซ้อนกัน ใส่วันเหลื่อมเป็นค่าติดลบ (เริ่มได้ก่อนงานก่อนหน้าเสร็จ) เพื่อให้ตรงกับแผน
+function cpmSuggest() {
+  var codes = {}; wbsList().forEach(function (o) { codes[o.t.id] = o.wbs; }); var n = 0;
+  $$('[data-pred]').forEach(function (el) {
+    if (el.value.trim()) return; var t = taskById(el.dataset.pred), bs = D(t.bs), bf = D(t.bf); if (!bs || !bf) return;
+    var c = S.tasks.filter(function (x) { if (x.id === t.id || (isMulti() && x.part !== t.part)) return false; var s0 = D(x.bs), f0 = D(x.bf); if (!s0 || !f0) return false;
+      var g = diffDays(bs, f0); return s0 < bs && f0 <= bf && g >= -30 && g <= 15; });
+    if (!c.length) return;
+    var best = c.reduce(function (a, x) { return D(x.bf) > D(a.bf) ? x : a; }), lag = diffDays(bs, D(best.bf)) - 1;
+    el.value = codes[best.id] + (lag ? (lag > 0 ? '+' : '') + lag : ''); el.style.borderColor = 'var(--gold)'; n++;
+  });
+  toast(n ? 'เสนอลำดับงานให้ ' + n + ' รายการ (กรอบสีทอง) – ตรวจแก้แล้วกด "บันทึกลำดับงาน"' : 'ไม่พบงานที่ต่อเนื่องกันตามวันที่ – กรอกเองได้', false, 5000);
+}
+function cpmDashCard() {
+  if (!S.tasks.length) return '';
+  var C = cpm(); if (C.cycle.length) return '';
+  var list = C.order.filter(function (r) { return r.state !== 'done' && (r.crit || r.impact > 0); }).sort(function (a, b) { return b.impact - a.impact || a.float - b.float || a.bs - b.bs; }).slice(0, 6), codes = {}; wbsList().forEach(function (o) { codes[o.t.id] = o.wbs; });
+  return '<div class="card"><div class="card-h"><h2>งานที่ห้ามช้า (สายงานวิกฤต)</h2><button class="btn sm sec" data-go="/p/' + S.P.id + '/cpm">ลำดับงาน ' + ic('chevr') + '</button></div>' +
+    '<p class="muted" style="margin-top:0">คาดว่าแล้วเสร็จ <b class="' + (C.delay ? 'bad-t' : 'ok-t') + '">' + th(C.finish) + '</b>' + (C.delay ? ' – ช้ากว่าสัญญา ' + C.delay + ' วัน' : ' – ทันตามสัญญา') + (hasLogic() ? '' : ' • ยังไม่ได้กำหนดลำดับงาน (ผลอาจคลาดเคลื่อน)') + '</p>' +
+    (list.length ? list.map(function (r) { return '<div class="item"><div class="between"><div class="grow"><span class="muted">' + esc(codes[r.t.id]) + '</span> <span class="t">' + esc(r.t.desc) + '</span><div class="m">ผลงาน ' + num(r.t.pct) + '% • แผนเสร็จ ' + th(r.bf, true) + ' • คาดเสร็จ ' + th(r.ef, true) + ' • วันเผื่อ ' + r.float + ' วัน</div></div>' + cpmBadge(r) + '</div></div>'; }).join('') : '<p class="ok-t">ไม่มีงานวิกฤตที่ยังไม่เสร็จ</p>') + '</div>';
+}
+/* ---------------- ตรวจงาน / จุดบกพร่องบนแบบ (Punch list) ---------------- */
+var PU_ST = ['เปิด', 'แก้ไขแล้ว รอตรวจ', 'ปิดแล้ว'], PU_PRI = ['สูง', 'ปกติ', 'ต่ำ'];
+var PU_CAT = ['งานโครงสร้าง', 'งานสถาปัตยกรรม', 'งานไฟฟ้า', 'งานสุขาภิบาล/ประปา', 'งานปรับอากาศ', 'งานภายนอก/ภูมิทัศน์', 'ความปลอดภัย', 'อื่นๆ'];
+var PUF = { st: 'open', dw: '', zoom: 1, add: false };
+function puState(p) { var k = p.status === 'ปิดแล้ว' ? 'ok' : p.status === 'แก้ไขแล้ว รอตรวจ' ? 'warn' : 'bad'; var t = p.status || 'เปิด';
+  if (k !== 'ok' && p.due && D(p.due) < today()) t += ' • เกินกำหนด ' + diffDays(today(), D(p.due)) + ' วัน'; return { k: k, t: t }; }
+function puColor(p) { return p.status === 'ปิดแล้ว' ? '#2E9D5B' : p.status === 'แก้ไขแล้ว รอตรวจ' ? '#C98A0B' : '#D33A2C'; }
+function puList(f) { return (S.punches || []).filter(function (p) { if (f.dw && (p.drawingId || '') !== (f.dw === '-' ? '' : f.dw)) return false; if (f.st === 'open') return p.status !== 'ปิดแล้ว'; if (f.st && f.st !== 'all') return p.status === f.st; return true; }).sort(function (a, b) { return num(a.no) - num(b.no); }); }
+function dwName(id) { var d = (S.drawings || []).filter(function (x) { return x.id === id; })[0]; return d ? d.name : 'ไม่ระบุแบบ'; }
+function dwFile(dw) { return S.files.filter(function (f) { return f.kind === 'drawing' && f.ref === dw.id; })[0]; }
+function loadPdfJs() {
+  if (window.pdfjsLib) return Promise.resolve();
+  return new Promise(function (res, rej) { var s = document.createElement('script'); s.src = 'vendor/pdf.min.js'; s.onload = function () { pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.js'; res(); }; s.onerror = function () { rej(new Error('โหลดตัวอ่าน PDF ไม่ได้')); }; document.head.appendChild(s); });
+}
+// แปลงแบบ (รูป หรือ PDF หน้าที่เลือก) เป็นรูปความละเอียดสูงสำหรับวางหมุด
+async function drawingImage(file, page) {
+  var canvas = document.createElement('canvas'), g, max = 3200;
+  if (file.type === 'application/pdf') {
+    await loadPdfJs(); var pdf = await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise, pg = await pdf.getPage(page || 1), vp0 = pg.getViewport({ scale: 1 });
+    var sc = Math.min(4, max / Math.max(vp0.width, vp0.height)), vp = pg.getViewport({ scale: sc });
+    canvas.width = Math.round(vp.width); canvas.height = Math.round(vp.height); g = canvas.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, canvas.width, canvas.height);
+    await pg.render({ canvasContext: g, viewport: vp }).promise;
+  } else {
+    var url = URL.createObjectURL(file), img = await new Promise(function (r, j) { var im = new Image(); im.onload = function () { r(im); }; im.onerror = function () { j(new Error('เปิดรูปไม่ได้')); }; im.src = url; });
+    var s2 = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight)); canvas.width = Math.round(img.naturalWidth * s2); canvas.height = Math.round(img.naturalHeight * s2);
+    g = canvas.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, canvas.width, canvas.height); g.drawImage(img, 0, 0, canvas.width, canvas.height); URL.revokeObjectURL(url);
+  }
+  var blob = await new Promise(function (r) { canvas.toBlob(r, 'image/jpeg', 0.85); });
+  return { blob: blob, w: canvas.width, h: canvas.height };
+}
+async function pdfPageCount(file) { await loadPdfJs(); var pdf = await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise; return pdf.numPages; }
+function addDrawing() {
+  var bg = modal('<h2>เพิ่มแบบก่อสร้าง</h2><p class="muted">ใช้ไฟล์ PDF (เลือกหน้าได้) หรือรูปภาพ/ภาพถ่ายแบบ • แบบจะถูกเก็บเป็นรูปความละเอียดสูงสำหรับวางหมุดจุดบกพร่อง</p>' +
+    '<label class="f" for="dwFile">ไฟล์แบบ</label><input type="file" id="dwFile" class="i" accept="application/pdf,image/*">' +
+    '<div id="dwPgBox" class="hidden"><label class="f" for="dwPg">หน้า</label><select id="dwPg" class="i"></select></div>' +
+    '<label class="f" for="dwName">ชื่อแบบ</label><input id="dwName" class="i" placeholder="เช่น A-01 ผังพื้นชั้น 1">', async function (bg) {
+      var f = bg.querySelector('#dwFile').files[0]; if (!f) throw new Error('เลือกไฟล์แบบ');
+      if (f.size > 60 * 1024 * 1024) throw new Error('ไฟล์ใหญ่เกิน 60 MB');
+      var ok = bg.querySelector('[data-ok]'); ok.disabled = true; ok.innerHTML = '<span class="spin"></span> กำลังแปลงแบบ…';
+      try {
+        var pg = +(val(bg, 'dwPg') || 1), r = await drawingImage(f, pg), id = uid(), name = val(bg, 'dwName') || f.name.replace(/\.[^.]+$/, '') + (f.type === 'application/pdf' ? ' หน้า ' + pg : '');
+        var rec = { id: uid(), projectId: S.P.id, kind: 'drawing', ref: id, caption: name, mime: 'image/jpeg', name: name + '.jpg', size: r.blob.size, blob: r.blob, created: new Date().toISOString() };
+        await DB.put('files', rec); S.files.push(rec);
+        var dw = { id: id, projectId: S.P.id, name: name, w: r.w, h: r.h, order: (S.drawings || []).length + 1, created: new Date().toISOString() };
+        await DB.put('drawings', dw); S.drawings.push(dw); toast('เพิ่มแบบแล้ว – แตะ "วางหมุด" แล้วแตะบนแบบเพื่อบันทึกจุดบกพร่อง', false, 4500); go('/p/' + S.P.id + '/punch/' + id);
+      } finally { ok.disabled = false; ok.textContent = 'เพิ่มแบบ'; }
+    }, 'เพิ่มแบบ');
+  bg.querySelector('#dwFile').onchange = async function (e) {
+    var f = e.target.files[0], box = bg.querySelector('#dwPgBox'); if (!f) return;
+    if (!val(bg, 'dwName')) bg.querySelector('#dwName').value = f.name.replace(/\.[^.]+$/, '');
+    if (f.type !== 'application/pdf') { box.classList.add('hidden'); return; }
+    try { var n = await pdfPageCount(f); bg.querySelector('#dwPg').innerHTML = Array.from({ length: n }, function (_, i) { return '<option value="' + (i + 1) + '">หน้า ' + (i + 1) + ' / ' + n + '</option>'; }).join(''); box.classList.remove('hidden'); }
+    catch (er) { toast('อ่านไฟล์ PDF ไม่ได้: ' + er.message, true); }
+  };
+}
+async function vPunch(args) {
+  var pid = S.P.id; PUF.dw = args[0] || '';
+  if (PUF.dw && PUF.dw !== '-') { var dw = (S.drawings || []).filter(function (x) { return x.id === PUF.dw; })[0]; if (dw) return puDrawingView(dw); PUF.dw = ''; }
+  var all = S.punches || [], cnt = function (f) { return all.filter(f).length; };
+  var over = cnt(function (p) { return p.status !== 'ปิดแล้ว' && p.due && D(p.due) < today(); });
+  var h = pageHead('ตรวจงาน / จุดบกพร่อง', 'บันทึกจุดที่ต้องแก้ไขบนแบบก่อสร้าง พร้อมรูปก่อน–หลังแก้ ติดตามจนปิดงาน (Punch list)',
+    '<button class="btn sec" data-act="puPrint">' + ic('print') + 'รายงาน</button><button class="btn sec" data-act="puAdd">' + ic('plus') + 'จุดบกพร่อง (ไม่ใช้แบบ)</button><button class="btn" data-act="dwAdd">' + ic('upload') + 'เพิ่มแบบ</button>');
+  h += '<div class="card"><div class="kpis">' + kpi('ทั้งหมด', all.length + ' จุด') + kpi('เปิดอยู่', cnt(function (p) { return p.status === 'เปิด' || !p.status; }) + ' จุด', '', 'bad-t') +
+    kpi('แก้แล้ว รอตรวจ', cnt(function (p) { return p.status === 'แก้ไขแล้ว รอตรวจ'; }) + ' จุด', '', 'warn-t') + kpi('ปิดแล้ว', cnt(function (p) { return p.status === 'ปิดแล้ว'; }) + ' จุด', all.length ? pct(cnt(function (p) { return p.status === 'ปิดแล้ว'; }) / all.length, 0) : '', 'ok-t') +
+    kpi('เกินกำหนดแก้ไข', over + ' จุด', '', over ? 'bad-t' : '') + '</div></div>';
+  var D_ = S.drawings || [];
+  h += '<div class="card"><h2>แบบก่อสร้าง (' + D_.length + ')</h2>' + (D_.length ? '<div class="dwgrid">' + D_.map(function (dw) { var f = dwFile(dw), ps = all.filter(function (p) { return p.drawingId === dw.id; }), op = ps.filter(function (p) { return p.status !== 'ปิดแล้ว'; }).length;
+      return '<button class="dwcard" data-go="/p/' + pid + '/punch/' + dw.id + '"><span class="dwthumb" ' + (f ? 'data-fimg="' + f.id + '"' : '') + '></span><span class="dwn">' + esc(dw.name) + '</span><span class="muted">' + ps.length + ' จุด' + (op ? ' • <b class="bad-t">ค้าง ' + op + '</b>' : '') + '</span></button>'; }).join('') + '</div>'
+    : '<p class="muted">ยังไม่มีแบบ – กด "เพิ่มแบบ" เพื่อนำเข้าไฟล์ PDF หรือรูปแบบก่อสร้าง แล้ววางหมุดจุดบกพร่องบนแบบได้เลย</p>') + '</div>';
+  h += puTable(puList({ st: PUF.st, dw: '' }), true);
+  return h;
+}
+function puChips() { return '<div class="chips">' + [['open', 'ยังไม่ปิด'], ['เปิด', 'เปิด'], ['แก้ไขแล้ว รอตรวจ', 'รอตรวจ'], ['ปิดแล้ว', 'ปิดแล้ว'], ['all', 'ทั้งหมด']].map(function (x) { return '<button class="chip' + (PUF.st === x[0] ? ' on' : '') + '" data-act="puFilter" data-v="' + esc(x[0]) + '">' + x[1] + '</button>'; }).join('') + '</div>'; }
+function puTable(list, withDw) {
+  return '<div class="card"><div class="card-h"><h2>รายการจุดบกพร่อง</h2>' + puChips() + '</div>' + (list.length ? '<div class="tw"><table class="tbl"><thead><tr><th>#</th><th>รายการ</th>' + (withDw ? '<th>แบบ</th>' : '') + '<th>หมวด</th><th>ผู้รับผิดชอบ</th><th>กำหนดแก้</th><th>สถานะ</th></tr></thead><tbody>' +
+    list.map(function (p) { var ph = filesOf('punch', p.id).length + filesOf('punchfix', p.id).length;
+      return '<tr class="click" data-pu="' + p.id + '"><td><span class="pin sm" style="background:' + puColor(p) + '">' + esc(p.no) + '</span></td><td><b>' + esc(p.title) + '</b>' + (p.desc ? '<div class="muted" style="font-size:15px">' + esc(p.desc.slice(0, 90)) + '</div>' : '') + (ph ? '<div class="muted" style="font-size:14px">' + ic('camera') + ' ' + ph + ' รูป</div>' : '') + '</td>' +
+        (withDw ? '<td>' + esc(p.drawingId ? dwName(p.drawingId) : '-') + '</td>' : '') + '<td>' + esc(p.cat || '-') + '</td><td>' + esc(p.assignee || '-') + '</td><td>' + (p.due ? th(p.due, true) : '-') + '</td><td>' + badge(puState(p)) + '</td></tr>'; }).join('') + '</tbody></table></div>'
+    : '<p class="muted">ไม่มีรายการในตัวกรองนี้</p>') + '</div>';
+}
+function puDrawingView(dw) {
+  var pid = S.P.id, f = dwFile(dw), list = puList({ st: PUF.st, dw: dw.id }), z = PUF.zoom;
+  var h = pageHead(esc(dw.name), 'แตะ "วางหมุด" แล้วแตะตำแหน่งบนแบบเพื่อบันทึกจุดบกพร่อง • แตะหมุดเพื่อดู/แก้ไข', '<button class="btn sec" data-go="/p/' + pid + '/punch">' + ic('chevl') + 'แบบทั้งหมด</button><button class="btn sec" data-act="puPrint" data-dw="' + dw.id + '">' + ic('print') + 'รายงานแบบนี้</button>');
+  h += '<div class="card dwbar"><button class="btn' + (PUF.add ? ' acc' : '') + '" data-act="puPin">' + ic('plus') + (PUF.add ? 'แตะบนแบบเพื่อวางหมุด… (กดอีกครั้งเพื่อยกเลิก)' : 'วางหมุด') + '</button>' +
+    '<div class="seg">' + [[1, '100%'], [1.5, '150%'], [2, '200%'], [3, '300%']].map(function (x) { return '<button data-act="puZoom" data-v="' + x[0] + '" class="' + (z === x[0] ? 'on' : '') + '">' + x[1] + '</button>'; }).join('') + '</div>' +
+    puChips() + '<span class="grow"></span><button class="btn sm ghost bad-t" data-act="dwDel" data-id="' + dw.id + '">' + ic('trash') + 'ลบแบบ</button></div>';
+  h += '<div class="card dwview' + (PUF.add ? ' adding' : '') + '"><div class="dwscroll"><div class="dwbox" id="dwBox" style="width:' + (z * 100) + '%;aspect-ratio:' + dw.w + '/' + dw.h + '"><img id="dwImg" ' + (f ? 'data-fimg="' + f.id + '"' : '') + ' alt="แบบ ' + esc(dw.name) + '">' +
+    list.map(function (p) { return '<button class="pin" data-pu="' + p.id + '" style="left:' + (p.x * 100) + '%;top:' + (p.y * 100) + '%;background:' + puColor(p) + '" title="' + esc(p.no + '. ' + p.title) + '">' + esc(p.no) + '</button>'; }).join('') + '</div></div></div>';
+  h += puTable(list, false);
+  after(function () { var box = $('#dwBox'); if (!box) return; box.addEventListener('click', function (e) { if (!PUF.add || e.target.closest('.pin')) return; var r = box.getBoundingClientRect();
+    var x = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)), y = Math.max(0, Math.min(1, (e.clientY - r.top) / r.height)); PUF.add = false; openPunch(null, { drawingId: dw.id, x: x, y: y }); }); });
+  return h;
+}
+function puThumbs(kind, id) { return filesOf(kind, id).map(function (f) { return '<span class="pth" data-fimg="' + f.id + '" data-open="' + f.id + '"></span>'; }).join(''); }
+function openPunch(id, preset) {
+  var p = id ? (S.punches || []).filter(function (x) { return x.id === id; })[0] : Object.assign({ status: 'เปิด', priority: 'ปกติ', found: iso(today()), assignee: S.P.contractor || 'ผู้รับจ้าง', cat: PU_CAT[1] }, preset || {});
+  if (!p) return; var pend = { punch: [], punchfix: [] };
+  var tasks = wbsList().map(function (o) { return [o.t.id, o.wbs + ' ' + o.t.desc]; });
+  var bg = modal('<h2>' + (id ? 'จุดบกพร่อง #' + esc(p.no) : 'บันทึกจุดบกพร่องใหม่') + '</h2>' + (p.drawingId ? '<p class="muted" style="margin-top:-6px">บนแบบ: ' + esc(dwName(p.drawingId)) + '</p>' : '') +
+    '<label class="f" for="puT">รายการที่พบ</label><input id="puT" class="i" value="' + esc(p.title) + '" placeholder="เช่น ผนังร้าวใต้หน้าต่าง W2">' +
+    '<label class="f" for="puD">รายละเอียด / สิ่งที่ต้องแก้ไข</label><textarea id="puD" class="i" rows="3">' + esc(p.desc) + '</textarea>' +
+    '<div class="grid2"><div><label class="f" for="puC">หมวด</label><select id="puC" class="i">' + opts(PU_CAT, p.cat) + '</select></div>' + inp('puA', 'ผู้รับผิดชอบแก้ไข', p.assignee) +
+    '<div><label class="f" for="puP">ความสำคัญ</label><select id="puP" class="i">' + opts(PU_PRI, p.priority) + '</select></div><div><label class="f" for="puS">สถานะ</label><select id="puS" class="i">' + opts(PU_ST, p.status) + '</select></div>' +
+    inp('puF', 'วันที่พบ', p.found, 'date') + inp('puDue', 'กำหนดแก้ไขเสร็จ', p.due, 'date') +
+    '<div><label class="f" for="puTk">เกี่ยวกับรายการงาน (ไม่บังคับ)</label><select id="puTk" class="i">' + opts(tasks, p.taskId, '-') + '</select></div>' + inp('puClose', 'วันที่ตรวจปิดงาน', p.closed, 'date') + '</div>' +
+    '<div class="grid2" style="margin-top:8px"><div><label class="f">รูปก่อนแก้ไข (จุดที่พบ)</label><div class="pths" id="pth_punch">' + (id ? puThumbs('punch', p.id) : '') + '</div><label class="btn sm sec">' + ic('camera') + 'เพิ่มรูป<input type="file" class="hidden" accept="image/*" multiple data-puf="punch"></label></div>' +
+    '<div><label class="f">รูปหลังแก้ไข</label><div class="pths" id="pth_punchfix">' + (id ? puThumbs('punchfix', p.id) : '') + '</div><label class="btn sm sec">' + ic('camera') + 'เพิ่มรูป<input type="file" class="hidden" accept="image/*" multiple data-puf="punchfix"></label></div></div>' +
+    (id ? '<div style="margin-top:10px"><button class="btn sm bad" id="puDel">ลบจุดนี้</button></div>' : ''),
+    async function (bg) {
+      var o = Object.assign({}, p, { title: val(bg, 'puT'), desc: val(bg, 'puD'), cat: val(bg, 'puC'), assignee: val(bg, 'puA'), priority: val(bg, 'puP'), status: val(bg, 'puS'), found: val(bg, 'puF'), due: val(bg, 'puDue'), taskId: val(bg, 'puTk'), closed: val(bg, 'puClose'), updated: new Date().toISOString() });
+      if (!o.title) throw new Error('กรอกรายการที่พบ');
+      if (o.status === 'ปิดแล้ว' && !o.closed) o.closed = iso(today()); if (o.status !== 'ปิดแล้ว') o.closed = '';
+      if (!id) { o.id = uid(); o.projectId = S.P.id; o.created = o.updated; o.no = (S.punches || []).reduce(function (a, x) { return Math.max(a, num(x.no)); }, 0) + 1; }
+      await DB.put('punches', o); if (id) Object.assign(p, o); else S.punches.push(o);
+      for (var k in pend) if (pend[k].length) await addFiles(k, o.id, pend[k]);
+      toast(id ? 'บันทึกแล้ว' : 'บันทึกจุดบกพร่อง #' + o.no + ' แล้ว'); render();
+    }, id ? 'บันทึก' : 'บันทึกจุดบกพร่อง', true);
+  $$('[data-puf]', bg).forEach(function (inpEl) { inpEl.onchange = async function () {
+    var k = inpEl.dataset.puf, fl = Array.prototype.slice.call(inpEl.files || []); if (!fl.length) return;
+    if (id) { await addFiles(k, p.id, fl); bg.querySelector('#pth_' + k).innerHTML = puThumbs(k, p.id); hydrateImgs(); }
+    else { pend[k] = pend[k].concat(fl); bg.querySelector('#pth_' + k).insertAdjacentHTML('beforeend', fl.map(function (f) { return '<span class="pth" style="background-image:url(' + URL.createObjectURL(f) + ')"></span>'; }).join('')); }
+    inpEl.value = ''; }; });
+  hydrateImgs();
+  var del = bg.querySelector('#puDel');
+  if (del) del.onclick = async function () {
+    if (!(await confirmBox('ลบจุดบกพร่อง #' + p.no + ' และรูปที่แนบ?', 'ลบ'))) return;
+    var fs = filesOf('punch', p.id).concat(filesOf('punchfix', p.id)).map(function (f) { return f.id; });
+    await DB.del('punches', p.id); if (fs.length) await DB.delMany('files', fs);
+    S.punches = S.punches.filter(function (x) { return x.id !== p.id; }); S.files = S.files.filter(function (f) { return fs.indexOf(f.id) < 0; });
+    bg.remove(); toast('ลบแล้ว'); render();
+  };
+}
+// รูปแบบพร้อมหมุด (สำหรับพิมพ์/Word)
+async function dwComposite(dw, list) {
+  var f = dwFile(dw); if (!f) return '';
+  try { await ensureBlob(f); } catch (e) { return ''; }
+  var img = await new Promise(function (r, j) { var im = new Image(); im.onload = function () { r(im); }; im.onerror = j; im.src = fileUrl(f); });
+  var sc = Math.min(1, 1800 / Math.max(img.naturalWidth, img.naturalHeight)), c = document.createElement('canvas'); c.width = Math.round(img.naturalWidth * sc); c.height = Math.round(img.naturalHeight * sc);
+  var g = c.getContext('2d'); g.drawImage(img, 0, 0, c.width, c.height); var R = Math.max(14, Math.round(c.width / 90));
+  list.forEach(function (p) { var x = p.x * c.width, y = p.y * c.height; g.beginPath(); g.arc(x, y, R, 0, Math.PI * 2); g.fillStyle = puColor(p); g.fill(); g.lineWidth = Math.max(2, R / 6); g.strokeStyle = '#fff'; g.stroke();
+    g.fillStyle = '#fff'; g.font = 'bold ' + Math.round(R * 1.1) + 'px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(String(p.no), x, y + 1); });
+  return c.toDataURL('image/jpeg', 0.85);
+}
+async function docPunch(key) {
+  var list = puList({ st: 'all', dw: key === 'all' ? '' : key }), dws = key === 'all' ? (S.drawings || []) : (S.drawings || []).filter(function (x) { return x.id === key; });
+  var h = '<div class="doc"><h1>รายงานการตรวจงานและจุดบกพร่อง</h1><p style="text-align:center;margin-top:-4px">ข้อมูล ณ วันที่ ' + th(today()) + '</p>' + docHead() +
+    '<p>รวม ' + list.length + ' จุด • เปิด ' + list.filter(function (p) { return p.status === 'เปิด'; }).length + ' • แก้ไขแล้วรอตรวจ ' + list.filter(function (p) { return p.status === 'แก้ไขแล้ว รอตรวจ'; }).length + ' • ปิดแล้ว ' + list.filter(function (p) { return p.status === 'ปิดแล้ว'; }).length + '</p>';
+  for (var i = 0; i < dws.length; i++) { var L = list.filter(function (p) { return p.drawingId === dws[i].id; }); if (!L.length) continue; var src = await dwComposite(dws[i], L);
+    h += '<h3>แบบ: ' + esc(dws[i].name) + '</h3>' + (src ? '<img src="' + src + '" style="width:100%;border:1px solid #999" alt="">' : ''); }
+  h += '<h3>รายการจุดบกพร่อง</h3><table><tr><th>#</th><th>รายการ / สิ่งที่ต้องแก้ไข</th><th>ตำแหน่ง</th><th>ผู้รับผิดชอบ</th><th>พบ</th><th>กำหนด</th><th>สถานะ</th></tr>' +
+    list.map(function (p) { return '<tr><td>' + esc(p.no) + '</td><td><b>' + esc(p.title) + '</b>' + (p.desc ? '<br>' + esc(p.desc) : '') + '</td><td>' + esc(p.drawingId ? dwName(p.drawingId) : '-') + '</td><td>' + esc(p.assignee || '-') + '</td><td>' + th(p.found, true) + '</td><td>' + (p.due ? th(p.due, true) : '-') + '</td><td>' + esc(p.status) + (p.closed ? ' ' + th(p.closed, true) : '') + '</td></tr>'; }).join('') + '</table>';
+  var withPh = list.filter(function (p) { return filesOf('punch', p.id).length || filesOf('punchfix', p.id).length; });
+  if (withPh.length) { h += '<h3>ภาพประกอบ</h3>'; withPh.forEach(function (p) { h += '<p><b>#' + esc(p.no) + ' ' + esc(p.title) + '</b></p>' + photoGrid(filesOf('punch', p.id), 'ก่อนแก้') + photoGrid(filesOf('punchfix', p.id), 'หลังแก้'); }); }
+  return h + '<div class="sig1">ลงชื่อ ..........................................<br>(' + esc(S.P.supervisor_name || '..........................................') + ')<br>' + esc(S.P.supervisor_pos || 'ผู้ควบคุมงาน') + '</div></div>';
+}
 /* ---------------- PROJECT SETTINGS ---------------- */
 async function vProjSet() {
   var p = S.P;
@@ -1210,6 +1499,7 @@ async function vPrint(args) {
   else if (kind === 'mat') html = docMat(key);
   else if (kind === 'pay') html = docPay(key);
   else if (kind === 'dash') html = docDash();
+  else if (kind === 'punch') html = await docPunch(key);
   else return '<div class="card empty">ไม่พบเอกสาร</div>';
   return docWrap(kind, key, html);
 }
@@ -1488,9 +1778,12 @@ async function doBackup(withFiles) {
 }
 async function doRestore(file) {
   var data; try { data = JSON.parse(await file.text()); } catch (e) { throw new Error('ไฟล์นี้ไม่ใช่ไฟล์สำรองของแอป'); }
+  return restoreData(data);
+}
+async function restoreData(data) {
   if (!data || data.app !== 'sitecontrol' || !data.stores) throw new Error('ไฟล์นี้ไม่ใช่ไฟล์สำรองของแอป');
   var np = (data.stores.projects || []).length;
-  var bg = modal('<h2>กู้คืนข้อมูล</h2><p>ไฟล์สำรองวันที่ <b>' + th((data.exported || '').slice(0, 10)) + '</b> มี ' + np + ' โครงการ' + (data.withFiles ? ' (รวมรูป)' : ' (ไม่รวมรูป)') + '</p>' +
+  var bg = modal('<h2>กู้คืนข้อมูล</h2><p>ไฟล์สำรองวันที่ <b>' + th((data.exported || '').slice(0, 10)) + '</b> ' + (data.exported ? new Date(data.exported).toTimeString().slice(0, 5) + ' น. ' : '') + 'มี ' + np + ' โครงการ: ' + esc((data.stores.projects || []).map(function (p) { return p.name; }).join(', ').slice(0, 200)) + (data.cloud ? ' (จาก Google Drive – รูปจะโหลดจาก Drive เมื่อเปิดดู)' : data.withFiles ? ' (รวมรูป)' : ' (ไม่รวมรูป)') + '</p>' +
     '<label class="row"><input type="radio" name="rm" value="merge" checked><span><b>รวมกับข้อมูลเดิม</b> – รายการที่ซ้ำจะใช้ข้อมูลจากไฟล์</span></label>' +
     '<label class="row" style="margin-top:6px"><input type="radio" name="rm" value="replace"><span><b>แทนที่ทั้งหมด</b> – ลบข้อมูลในเครื่องแล้วใช้ข้อมูลจากไฟล์</span></label>', async function (bg) {
       var mode = bg.querySelector('input[name=rm]:checked').value;
@@ -1498,7 +1791,7 @@ async function doRestore(file) {
       for (var s in data.stores) {
         if (STORES.indexOf(s) < 0 || s === 'meta') continue;
         var rows = data.stores[s];
-        if (s === 'files') rows = rows.filter(function (f) { return f.data; }).map(function (f) { var o = Object.assign({}, f); o.blob = blobFromB64(f.data, f.mime); delete o.data; return o; });
+        if (s === 'files') rows = rows.filter(function (f) { return f.data || f.driveId; }).map(function (f) { var o = Object.assign({}, f); o.blob = f.data ? blobFromB64(f.data, f.mime) : null; delete o.data; return o; });
         await DB.putMany(s, rows);
       }
       S.P = null; toast('กู้คืนข้อมูลแล้ว (' + np + ' โครงการ)'); go('/');
@@ -1578,6 +1871,7 @@ async function doInstall() {
 /* ---------------- EVENTS ---------------- */
 document.addEventListener('click', async function (e) {
   var pb = e.target.closest('[data-pres]'); if (pb) { if (!pb.disabled) presNav(pb.dataset.pres); return; }
+  var pue = e.target.closest('[data-pu]'); if (pue && !e.target.closest('.mbg')) { openPunch(pue.dataset.pu); return; }
   var bkb = e.target.closest('[data-bkper],[data-bktab],[data-bkunit]');
   if (bkb) { var sv = $('#bkSrc'); if (sv) { BK.src = sv.value; BK.pid = S.P.id; }
     if (bkb.dataset.bkper) BK.per = bkb.dataset.bkper; if (bkb.dataset.bktab) BK.tab = bkb.dataset.bktab; if (bkb.dataset.bkunit) BK.unit = bkb.dataset.bkunit; return render(); }
@@ -1631,6 +1925,23 @@ document.addEventListener('click', async function (e) {
     else if (a === 'wipe') { if (await confirmBox('ลบข้อมูลทุกโครงการในเครื่องนี้? (ถ้าเปิดซิงก์ไว้ ข้อมูลบนคลาวด์ยังอยู่และจะถูกดึงกลับเมื่อซิงก์ครั้งถัดไป)', 'ลบทั้งหมด')) { for (var q = 0; q < STORES.length; q++) if (STORES[q] !== 'meta') await DB.clear(STORES[q]); await syncResetLocal(); S.P = null; toast('ล้างข้อมูลในเครื่องแล้ว'); go('/'); } }
     else if (a === 'pasteTasks') pasteTasks();
     else if (a === 'orgParts') orgParts();
+    else if (a === 'cloudBackup') { el.disabled = true; el.innerHTML = '<span class="spin"></span> กำลังสำรอง…'; try { var cbi = await cloudBackup(true); toast('สำรองขึ้น Google Drive แล้ว (' + (cbi.size / 1024).toFixed(0) + ' KB)'); render(); } finally { el.disabled = false; } }
+    else if (a === 'cloudRestore') await cloudRestore();
+    else if (a === 'cpmSave') await cpmSave();
+    else if (a === 'cpmSuggest') cpmSuggest();
+    else if (a === 'cpmShow') { CPF.show = el.dataset.v; render(); }
+    else if (a === 'cpmClear') { if (await confirmBox('ล้างลำดับงาน (งานก่อนหน้า) ของทุกรายการ?', 'ล้าง')) { var cc = S.tasks.filter(function (t) { return t.pred && t.pred.length; }); cc.forEach(function (t) { t.pred = []; }); if (cc.length) await DB.putMany('tasks', cc); render(); } }
+    else if (a === 'dwAdd') addDrawing();
+    else if (a === 'puAdd') openPunch(null, {});
+    else if (a === 'puFilter') { PUF.st = el.dataset.v; render(); }
+    else if (a === 'puZoom') { PUF.zoom = +el.dataset.v; render(); }
+    else if (a === 'puPin') { PUF.add = !PUF.add; render(); if (PUF.add) toast('แตะตำแหน่งบนแบบที่พบจุดบกพร่อง'); }
+    else if (a === 'puPrint') go('/p/' + S.P.id + '/print/punch/' + (el.dataset.dw || 'all'));
+    else if (a === 'dwDel') { var dwx = S.drawings.filter(function (x) { return x.id === el.dataset.id; })[0], npu = S.punches.filter(function (x) { return x.drawingId === dwx.id; });
+      if (!(await confirmBox('ลบแบบ "' + dwx.name + '"?' + (npu.length ? ' จุดบกพร่อง ' + npu.length + ' จุดบนแบบนี้จะยังอยู่ แต่ไม่มีตำแหน่งบนแบบ' : ''), 'ลบแบบ'))) return;
+      var fx = S.files.filter(function (f) { return f.kind === 'drawing' && f.ref === dwx.id; }).map(function (f) { return f.id; });
+      for (var q = 0; q < npu.length; q++) { npu[q].drawingId = ''; await DB.put('punches', npu[q]); }
+      await DB.del('drawings', dwx.id); if (fx.length) await DB.delMany('files', fx); S.drawings = S.drawings.filter(function (x) { return x.id !== dwx.id; }); S.files = S.files.filter(function (f) { return fx.indexOf(f.id) < 0; }); go('/p/' + S.P.id + '/punch'); }
     else if (a === 'about') openAbout();
     else if (a === 'forceRefresh') { if (await confirmBox('ล้างไฟล์แอปที่เก็บไว้แล้วโหลดเวอร์ชันล่าสุดจากเว็บ? (ข้อมูลโครงการไม่หาย)', 'โหลดใหม่')) await forceRefresh(); }
     else if (a === 'bkWipe') {
@@ -1861,6 +2172,8 @@ async function createSample(kind) {
 
 /* ---------------- เวอร์ชันและการอัปเดตแอป ---------------- */
 var CHANGELOG = [
+  ['2.9.0', '19 ต.ค. 2569', ['ปกป้องข้อมูล: สำรองข้อมูลทั้งหมดขึ้น Google Drive อัตโนมัติวันละครั้ง (ต้องอัปเดต SyncCode.gs เป็นเวอร์ชัน 2) และกู้คืนจาก Drive ได้', 'เตือนชัดเจนเมื่อข้อมูลอยู่ในเครื่องเดียว ไม่ได้ซิงก์นานเกิน 1 วัน หรือซิงก์ผิดพลาด',
+    'ลำดับงานและสายงานวิกฤต (หน้าผลงาน › ลำดับงาน): กำหนดงานก่อนหน้า ดูวันเผื่อ งานที่ห้ามช้า วันคาดว่าแล้วเสร็จ และแผนภูมิ Gantt', 'ตรวจงาน / จุดบกพร่องบนแบบ (Punch list): นำเข้าแบบ PDF/รูป วางหมุด แนบรูปก่อน–หลังแก้ ติดตามสถานะ และพิมพ์รายงาน']],
   ['2.8.0', '18 ต.ค. 2569', ['แสดงเลขเวอร์ชันมุมขวาบน กดเพื่อตรวจหาอัปเดต/ดูสิ่งที่เปลี่ยน', 'แจ้งเตือนเมื่อมีเวอร์ชันใหม่ (ตรวจอัตโนมัติทุกครั้งที่เปิดแอปและทุก 30 นาที) พร้อมปุ่มอัปเดตทันที และปุ่ม "บังคับโหลดใหม่" ถ้าค้างเวอร์ชันเก่า',
     'โหมดนำเสนอที่ประชุม (ภาพรวม › นำเสนอ) – สไลด์เต็มจอ: ข้อมูลโครงการ ตัวชี้วัด S-Curve ผลงานรายงวด รายงานส่วน/หมวด การเงิน ประเด็นติดตาม และรูปภาพ',
     'ตารางกรอก % แต่ละรายการ: แสดงน้ำหนักที่คำนวณได้ เลือกงานส่วนของแถวที่เพิ่มได้ • ปุ่มลบข้อมูลบันทึกย้อนหลังทั้งหมด']],
@@ -1937,6 +2250,10 @@ function presSlides() {
     big('คาดว่าแล้วเสร็จ', L.fEnd ? th(L.fEnd, true) : '-', L.fDelay ? 'ช้ากว่าสัญญา ' + L.fDelay + ' วัน' : 'ทันตามสัญญา', L.fDelay ? 'bad-t' : 'ok-t') + '</div>' +
     '<div class="pstat">สถานะ: <b class="' + (st.k === 'ok' ? 'ok-t' : st.k === 'bad' ? 'bad-t' : 'warn-t') + '">' + esc(st.t) + '</b>' + (backHasData() ? ' • ผลงานช่วงก่อนหน้าบันทึกย้อนหลังจากเอกสาร' + (p.backSrc ? ' (' + esc(p.backSrc) + ')' : '') : '') + '</div>' });
   sl.push({ t: 'S-Curve แผนงานเทียบผลงานจริง', h: '<div class="pchart"><canvas id="pcurve"></canvas></div>', chart: true });
+  var cpc = cpmDashCard(); if (cpc) sl.push({ t: 'งานที่ห้ามช้า (สายงานวิกฤต)', h: cpc.replace(/<div class="card-h">[\s\S]*?<\/div>/, '') });
+  var pus = S.punches || []; if (pus.length) { var po = pus.filter(function (x) { return x.status !== 'ปิดแล้ว'; });
+    sl.push({ t: 'ผลการตรวจงาน / จุดบกพร่อง', h: '<div class="pkpis">' + big('จุดที่ตรวจพบ', pus.length + ' จุด') + big('ปิดแล้ว', (pus.length - po.length) + ' จุด', pct((pus.length - po.length) / pus.length, 0), 'ok-t') + big('ยังไม่ปิด', po.length + ' จุด', '', po.length ? 'bad-t' : 'ok-t') + '</div>' +
+      (po.length ? '<table class="ptbl"><tr><th>#</th><th>รายการ</th><th>ผู้รับผิดชอบ</th><th>กำหนด</th><th>สถานะ</th></tr>' + po.slice(0, 8).map(function (x) { return '<tr><td>' + esc(x.no) + '</td><td>' + esc(x.title) + '</td><td>' + esc(x.assignee || '-') + '</td><td>' + (x.due ? th(x.due, true) : '-') + '</td><td>' + badge(puState(x)) + '</td></tr>'; }).join('') + '</table>' : '') }); }
   var per = backPeriods('10d'), hist = histIndex(); if (per.length > 12) per = per.length > 30 ? backPeriods('m').slice(-12) : per.slice(-12);
   if (per.length) sl.push({ t: 'ความก้าวหน้ารายงวด', h: '<table class="ptbl"><tr><th>งวด</th><th>สิ้นงวด</th><th class="num">แผนสะสม</th><th class="num">จริงในงวด</th><th class="num">จริงสะสม</th><th class="num">ผลต่าง</th></tr>' +
     per.map(function (x) { var a = actualAt(x.e, hist), a0 = actualAt(addDays(x.s, -1), hist), pp = planAt(x.e), df = a - pp;
@@ -1983,6 +2300,66 @@ document.addEventListener('keydown', function (e) {
   document.addEventListener('touchend', function (e) { if (x0 == null || !document.body.classList.contains('presenting')) return; var dx = e.changedTouches[0].clientX - x0; x0 = null;
     if (Math.abs(dx) > 60) { var b = $('[data-pres=' + (dx < 0 ? 'next' : 'prev') + ']'); if (b && !b.disabled) presNav(dx < 0 ? 'next' : 'prev'); } }, { passive: true }); })();
 
+/* ---------------- ปกป้องข้อมูล: สำรองอัตโนมัติขึ้น Google Drive ทุกวัน + เตือนเมื่อเสี่ยงข้อมูลหาย ---------------- */
+async function deviceTag() {
+  var d = await meta('deviceTag'); if (d) return d;
+  d = (/iPad|iPhone|Macintosh.*Mobile/.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Mac/.test(navigator.platform)) ? 'ipad' : /Android/.test(navigator.userAgent) ? 'android' : 'pc') + '-' + Math.random().toString(36).slice(2, 6);
+  await meta('deviceTag', d); return d;
+}
+// ภาพรวมข้อมูลทั้งหมด (ไม่รวมตัวไฟล์รูป – รูปเก็บใน Drive ผ่านการซิงก์อยู่แล้ว)
+async function snapshotData() {
+  var out = { app: 'sitecontrol', version: APP_VERSION, exported: new Date().toISOString(), withFiles: false, cloud: true, stores: {} };
+  for (var i = 0; i < STORES.length; i++) {
+    var s = STORES[i]; if (s === 'meta') continue;
+    out.stores[s] = (await DB.all(s)).map(function (o) { if (s !== 'files') return o; var f = Object.assign({}, o); delete f.blob; return f; });
+  }
+  return out;
+}
+async function cloudBackup(manual) {
+  var c = await syncCfg(); if (!c || !c.url) { if (manual) throw new Error('ต้องเชื่อมต่อซิงก์ก่อน จึงจะสำรองขึ้น Google Drive ได้'); return null; }
+  if (!navigator.onLine) { if (manual) throw new Error('ไม่มีอินเทอร์เน็ต'); return null; }
+  var snap = await snapshotData(), np = (snap.stores.projects || []).length;
+  if (!np && !manual) return null; // ไม่สำรองชุดว่าง (กันไม่ให้ไฟล์ว่างทับไฟล์ที่มีข้อมูล)
+  var today_ = iso(today()), r;
+  try { r = await syncCall(c, 'backup', { date: today_, device: await deviceTag(), data: JSON.stringify(snap) }); }
+  catch (e) {
+    if (/เวอร์ชันเก่า/.test(e.message)) { await meta('cloudBackup', Object.assign((await meta('cloudBackup')) || {}, { needUpdate: true })); if (manual) throw new Error('โค้ดซิงก์ใน Apps Script ยังเป็นเวอร์ชันเก่า – อัปเดต SyncCode.gs เป็นเวอร์ชัน 2 ตามคู่มือ แล้ว Deploy ใหม่ (Manage deployments › Edit › New version)'); return null; }
+    if (manual) throw e; return null;
+  }
+  var info = { date: today_, at: new Date().toISOString(), size: r.size, name: r.name, projects: np, count: r.count, needUpdate: false };
+  await meta('cloudBackup', info); return info;
+}
+async function cloudBackupDaily() { try { var b = (await meta('cloudBackup')) || {}; if (b.date !== iso(today())) await cloudBackup(false); } catch (e) {} }
+async function cloudRestore() {
+  var c = await syncCfg(); if (!c) throw new Error('ต้องเชื่อมต่อซิงก์ก่อน');
+  var bg = modal('<h2>กู้คืนจาก Google Drive</h2><p><span class="spin"></span> กำลังโหลดรายการไฟล์สำรอง…</p>');
+  var list; try { list = await syncCall(c, 'listBackups', {}); } catch (e) { bg.remove(); throw new Error(/เวอร์ชันเก่า/.test(e.message) ? 'โค้ดซิงก์ใน Apps Script ยังเป็นเวอร์ชันเก่า – อัปเดต SyncCode.gs เป็นเวอร์ชัน 2 ก่อน' : e.message); }
+  var m = bg.querySelector('.modal');
+  m.innerHTML = '<h2>กู้คืนจาก Google Drive</h2>' + (list.length ? '<p class="muted">ไฟล์สำรองรายวัน (วันละ 1 ไฟล์ต่อเครื่อง เก็บย้อนหลัง 60 ไฟล์) • เลือกไฟล์แล้วเลือกวิธีกู้คืนในขั้นถัดไป</p><div class="tw"><table class="tbl"><thead><tr><th>วันที่</th><th>เครื่อง</th><th class="num">ขนาด</th><th></th></tr></thead><tbody>' +
+    list.map(function (f) { var mm = /backup-(\d{4}-\d{2}-\d{2})-?([\w-]*)\.json$/.exec(f.name) || []; return '<tr><td>' + (mm[1] ? th(mm[1]) : esc(f.name)) + '<div class="muted" style="font-size:14px">บันทึก ' + esc(f.at.replace('T', ' ').slice(0, 16)) + '</div></td><td>' + esc(/^ipad/.test(mm[2] || '') ? 'iPad' : /^pc/.test(mm[2] || '') ? 'คอมพิวเตอร์' : mm[2] || '-') + '</td><td class="num">' + (f.size / 1024).toFixed(0) + ' KB</td><td><button class="btn sm" data-cr="' + esc(f.id) + '">เลือก</button></td></tr>'; }).join('') + '</tbody></table></div>'
+    : '<p>ยังไม่มีไฟล์สำรองบน Google Drive</p>') + '<div class="mfoot"><button class="btn sec" data-x>ปิด</button></div>';
+  $$('[data-cr]', m).forEach(function (b) { b.onclick = async function () {
+    b.disabled = true; b.innerHTML = '<span class="spin"></span>';
+    try { var r = await syncCall(c, 'getBackup', { id: b.dataset.cr }); bg.remove(); await restoreData(JSON.parse(r.data)); } catch (e) { toast('โหลดไฟล์สำรองไม่ได้: ' + e.message, true); b.disabled = false; b.textContent = 'เลือก'; }
+  }; });
+}
+// สถานะความปลอดภัยของข้อมูล → แบนเนอร์เตือน (หน้าโครงการทั้งหมด และหน้าภาพรวมโครงการ)
+async function dataSafetyBanner() {
+  var c = await syncCfg(), lastBk = await meta('lastBackup'), cb = (await meta('cloudBackup')) || {}, persisted = false;
+  try { persisted = navigator.storage && navigator.storage.persisted ? await navigator.storage.persisted() : false; } catch (e) {}
+  if (aiSandboxed()) return '';
+  if (!c) {
+    var days = lastBk ? diffDays(today(), D(lastBk.slice(0, 10))) : null;
+    return '<div class="banner bad"><span class="grow"><b>ข้อมูลอยู่ในเครื่องนี้เครื่องเดียว</b> – ถ้าล้างข้อมูลเบราว์เซอร์ ถอนการติดตั้งแอป หรือเครื่องเสีย ข้อมูลทุกโครงการจะหายถาวร • ' +
+      (days == null ? 'ยังไม่เคยสำรองข้อมูลเป็นไฟล์' : 'สำรองเป็นไฟล์ล่าสุด ' + (days === 0 ? 'วันนี้' : days + ' วันที่แล้ว')) + ' • แนะนำให้เปิด<b>ซิงก์</b> (สำรองขึ้น Google Drive อัตโนมัติทุกวัน)</span>' +
+      '<button class="btn sm" data-go="/app">ตั้งค่าซิงก์</button><button class="btn sm sec" data-act="backup">สำรองเป็นไฟล์</button></div>';
+  }
+  var last = c.lastSync ? new Date(c.lastSync) : null, hrs = last ? (Date.now() - last) / 3600000 : 1e9, pend = SYNC.pending;
+  if (SYNC.state === 'err' && hrs > 1) return '<div class="banner bad"><span class="grow"><b>ซิงก์ไม่สำเร็จ</b>' + (last ? ' ตั้งแต่ ' + th(last.toISOString().slice(0, 10), true) + ' ' + last.toTimeString().slice(0, 5) : '') + ' – ' + esc(SYNC.msg || '') + (pend ? ' • มีข้อมูลรอส่ง ' + pend + ' รายการ (ยังอยู่ในเครื่องนี้เท่านั้น)' : '') + '</span><button class="btn sm" data-act="syncNow">ลองซิงก์อีกครั้ง</button><button class="btn sm sec" data-go="/app">ตั้งค่า</button></div>';
+  if (hrs > 24) return '<div class="banner warn"><span class="grow"><b>ไม่ได้ซิงก์มา ' + (last ? Math.floor(hrs / 24) + ' วัน' : 'นานแล้ว') + '</b>' + (pend ? ' • มีข้อมูลรอส่ง ' + pend + ' รายการ' : '') + ' – ข้อมูลล่าสุดยังไม่ได้สำรองขึ้น Google Drive</span><button class="btn sm" data-act="syncNow">ซิงก์เดี๋ยวนี้</button></div>';
+  if (cb.needUpdate) return '<div class="banner warn"><span class="grow"><b>ยังไม่ได้เปิดสำรองรายวันบน Google Drive</b> – อัปเดตโค้ด SyncCode.gs ใน Apps Script เป็นเวอร์ชัน 2 แล้ว Deploy ใหม่ (ดูคู่มือ) • การซิงก์ยังทำงานปกติ</span><button class="btn sm sec" data-go="/app">รายละเอียด</button></div>';
+  return '';
+}
 /* ---------------- START ---------------- */
 function registerSW() {
   if (!('serviceWorker' in navigator) || location.protocol === 'file:' || /claudeusercontent|claude\.ai/.test(location.host)) return;
@@ -2643,7 +3020,7 @@ function aiCard(s, cfg) {
 }
 
 /* ---------------- ซิงก์ข้อมูลระหว่างเครื่อง (ผ่าน Google Apps Script ของผู้ใช้) ---------------- */
-var SYNC_STORES = ['projects', 'tasks', 'progress', 'daily', 'weekly', 'submittals', 'files', 'installments', 'vos', 'eots', 'docs'];
+var SYNC_STORES = ['projects', 'tasks', 'progress', 'daily', 'weekly', 'submittals', 'files', 'installments', 'vos', 'eots', 'docs', 'drawings', 'punches'];
 var SYNC = { running: false, timer: null, state: 'off', msg: '', pending: 0, last: null, silent: 0 };
 // ---- บันทึกทุกการเปลี่ยนแปลงลงคิว (outbox) ----
 var _raw = { put: DB.put, putMany: DB.putMany, del: DB.del, delMany: DB.delMany };
@@ -2756,6 +3133,7 @@ async function syncNow(manual) {
     c = await syncCfg(); c.lastSync = SYNC.last.toISOString(); await meta('sync', c);
     if (changed) await syncRefresh();
     if (manual) toast('ซิงก์ข้อมูลแล้ว');
+    cloudBackupDaily();
   } catch (e) { SYNC.state = 'err'; SYNC.msg = e.message; if (manual) toast(e.message, true); }
   finally { SYNC.running = false; syncBadge(); if (SYNC.again) { SYNC.again = false; scheduleSync(1500); } }
 }
@@ -2789,12 +3167,20 @@ async function syncCard() {
     return h + '<div class="kpis">' + kpi('สถานะ', SYNC.state === 'err' ? 'ผิดพลาด' : SYNC.state === 'busy' ? 'กำลังซิงก์' : 'เชื่อมต่อแล้ว', SYNC.msg || '', SYNC.state === 'err' ? 'bad-t' : 'ok-t') +
       kpi('ซิงก์ล่าสุด', c.lastSync ? th(c.lastSync.slice(0, 10), true) + ' ' + new Date(c.lastSync).toTimeString().slice(0, 5) : '-') + kpi('รอส่งขึ้นคลาวด์', ob + ' รายการ') + '</div>' +
       '<p class="muted" style="margin-top:10px">ซิงก์อัตโนมัติเมื่อเปิดแอป เมื่อแก้ไขข้อมูล และทุก 1 นาที • ถ้าแก้รายการเดียวกันจากสองเครื่อง ฉบับที่แก้ล่าสุดจะเป็นฉบับที่ใช้ • รูปถ่ายโหลดเมื่อเปิดดู</p>' +
-      '<div class="row"><button class="btn" data-act="syncNow">' + ic('backup') + 'ซิงก์เดี๋ยวนี้</button><button class="btn ghost bad-t" data-act="syncOff">ยกเลิกการเชื่อมต่อในเครื่องนี้</button></div></div>';
+      '<div class="row"><button class="btn" data-act="syncNow">' + ic('backup') + 'ซิงก์เดี๋ยวนี้</button><button class="btn ghost bad-t" data-act="syncOff">ยกเลิกการเชื่อมต่อในเครื่องนี้</button></div>' + (await cloudBackupCard()) + '</div>';
   }
   return h + '<p>เก็บข้อมูลทุกโครงการไว้ใน <b>Google Drive ของคุณ</b> แล้วใช้ร่วมกันได้ทุกเครื่อง • ติดตั้งตัวกลาง (Apps Script) ครั้งเดียวตามขั้นตอนใน README ส่วน "ซิงก์ข้อมูลระหว่างเครื่อง" แล้วนำลิงก์กับรหัสมาใส่ด้านล่าง <b>ทุกเครื่องใช้ลิงก์และรหัสเดียวกัน</b></p>' +
     '<div class="grid2">' + inp('syUrl', 'ลิงก์ Web app (https://script.google.com/macros/s/…/exec)', '', 'text', 'autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true" data-form-type="other" inputmode="url"') + inp('syKey', 'รหัสซิงก์ (24 ตัวอักษร)', '', 'text', 'autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true" data-form-type="other"') + '</div>' +
     '<div class="row" style="margin-top:10px"><button class="btn" data-act="syncOn">เชื่อมต่อและซิงก์</button></div>' +
     '<p class="muted">เชื่อมต่อครั้งแรก: ข้อมูลในเครื่องนี้จะถูกส่งขึ้นคลาวด์ และดึงข้อมูลจากเครื่องอื่นลงมารวมกัน</p></div>';
+}
+async function cloudBackupCard() {
+  var b = (await meta('cloudBackup')) || {};
+  return '<h3 style="margin-top:16px">สำรองข้อมูลรายวันบน Google Drive</h3>' +
+    (b.needUpdate ? '<div class="banner warn"><span class="grow">โค้ด SyncCode.gs ใน Apps Script ยังเป็นเวอร์ชันเก่า (ไม่มีการสำรองรายวัน) – เปิดโปรเจกต์ Apps Script เดิม วางโค้ด SyncCode.gs เวอร์ชัน 2 ทับทั้งหมด กดบันทึก แล้ว Deploy › Manage deployments › แก้ไข (ดินสอ) › Version: New version › Deploy • ลิงก์และรหัสซิงก์เดิมใช้ต่อได้</span></div>' : '') +
+    '<p>' + (b.at ? 'สำรองล่าสุด <b>' + th(b.at.slice(0, 10)) + ' ' + new Date(b.at).toTimeString().slice(0, 5) + ' น.</b> (' + (b.projects || 0) + ' โครงการ, ' + ((b.size || 0) / 1024).toFixed(0) + ' KB)' : 'ยังไม่เคยสำรองขึ้น Google Drive') + '</p>' +
+    '<p class="muted">ระบบสำรองข้อมูลทั้งหมดเป็นไฟล์ลงโฟลเดอร์ "site-control สำรองข้อมูลรายวัน" ใน Google Drive ของคุณวันละครั้งโดยอัตโนมัติ (แยกไฟล์ต่อเครื่อง เก็บย้อนหลัง 60 ไฟล์) • กู้คืนได้แม้ข้อมูลบนคลาวด์ถูกลบหรือแก้ผิดพลาด</p>' +
+    '<div class="row"><button class="btn sec" data-act="cloudBackup">สำรองขึ้น Drive เดี๋ยวนี้</button><button class="btn sec" data-act="cloudRestore">กู้คืนจาก Drive</button></div>';
 }
 async function syncConnect(url, key) {
   url = url.replace(/\s+/g, ''); key = key.replace(/\s+/g, '');
@@ -2819,7 +3205,7 @@ setInterval(function () { if (document.visibilityState === 'visible') syncNow(fa
 window.addEventListener('hashchange', function () { if (S.needRefresh) setTimeout(function () { if (!userBusy()) syncRefresh(); }, 300); });
 
 /* ---------------- เอกสาร: แก้ไขข้อความ/บันทึก และดาวน์โหลดเป็น Word ---------------- */
-var DOC_TITLES = { daily: 'บันทึกประจำวัน', weekly: 'รายงานประจำสัปดาห์', mat: 'รายงานขออนุมัติวัสดุ', pay: 'ใบสรุปเงินค่างาน', dash: 'สรุปสถานะโครงการ' };
+var DOC_TITLES = { daily: 'บันทึกประจำวัน', weekly: 'รายงานประจำสัปดาห์', mat: 'รายงานขออนุมัติวัสดุ', pay: 'ใบสรุปเงินค่างาน', dash: 'สรุปสถานะโครงการ', punch: 'รายงานตรวจงานและจุดบกพร่อง' };
 function docId(kind, key) { return S.P.id + '|' + kind + '|' + key; }
 function docSaved(kind, key) { var id = docId(kind, key); return (S.docs || []).filter(function (d) { return d.id === id; })[0]; }
 function cleanHtml(h) {
@@ -2834,7 +3220,7 @@ function cleanHtml(h) {
 }
 // ห่อเอกสาร: ใช้ฉบับที่ผู้ใช้แก้ไว้ (ถ้ามี) แทนฉบับอัตโนมัติ
 function docWrap(kind, key, autoHtml) {
-  var sv = docSaved(kind, key), back = { daily: '/daily/' + key, weekly: '/weekly/' + key, mat: '/mat/' + key, pay: '/fin/inst', dash: '' }[kind];
+  var sv = docSaved(kind, key), back = { daily: '/daily/' + key, weekly: '/weekly/' + key, mat: '/mat/' + key, pay: '/fin/inst', dash: '', punch: '/punch' + (key && key !== 'all' ? '/' + key : '') }[kind];
   var bar = '<div class="card noprint" id="docBar"><div class="row"><button class="btn sm sec" data-go="/p/' + S.P.id + back + '">' + ic('chevl') + 'กลับ</button>' +
     '<button class="btn" data-act="print">' + ic('print') + 'พิมพ์ / บันทึกเป็น PDF</button>' +
     '<button class="btn sec" data-act="docWord" data-kind="' + kind + '" data-key="' + esc(key) + '">' + ic('file') + 'ดาวน์โหลด Word</button>' +
