@@ -2,7 +2,7 @@
    คุมงานก่อสร้าง (PWA) — ใช้งานคนเดียว ข้อมูลเก็บในเครื่อง (IndexedDB)
    ===================================================================== */
 'use strict';
-var APP_VERSION = '2.7.1';
+var APP_VERSION = '2.7.2';
 
 /* ---------------- IndexedDB ---------------- */
 var DB_NAME = 'sitecontrol', DB_VER = 4;
@@ -810,14 +810,22 @@ async function vBack() {
     return h;
   }
   // ---- ตารางรายรายการ
+  // ตัวเลือกงานส่วน: เฉพาะที่มีรายการงานจริง (รวมชื่อที่ไม่อยู่ในรายชื่องานส่วน) พร้อมจำนวน
+  var pc = {}; S.tasks.forEach(function (t) { pc[t.part || ''] = (pc[t.part || ''] || 0) + 1; });
+  var pOpts = parts().filter(function (x) { return pc[x]; }).concat(Object.keys(pc).filter(function (x) { return parts().indexOf(x) < 0; }));
+  if (BK.part && !pc[BK.part]) BK.part = '';
   var list = wbsList().filter(function (o) { return !BK.part || o.t.part === BK.part; });
   var first = iso(addDays(per[0].s, -1)), inc = BK.unit === 'inc';
   h += '<div class="card"><div class="row" style="gap:16px;align-items:flex-end"><div><label class="f">หน่วยที่กรอก</label><div class="seg">' + [['cum', '% สะสมของรายการ'], ['inc', '% ของโครงการที่ทำได้ในงวด']].map(function (x) {
       return '<button type="button" data-bkunit="' + x[0] + '" class="' + (BK.unit === x[0] ? 'on' : '') + '">' + x[1] + '</button>'; }).join('') + '</div></div>' +
-    (isMulti() ? '<div><label class="f" for="bkPart">งานส่วน</label><select id="bkPart" class="i">' + opts([['', 'ทุกงานส่วน']].concat(parts()), BK.part) + '</select></div>' : '') + '</div>' +
+    (isMulti() ? '<div><label class="f" for="bkPart">งานส่วน</label><select id="bkPart" class="i">' + opts([['', 'ทุกงานส่วน (' + S.tasks.length + ' รายการ)']].concat(pOpts.map(function (x) { return [x, (x || 'ไม่ระบุงานส่วน') + ' (' + pc[x] + ')']; })), BK.part) + '</select></div>' : '') + '</div>' +
     '<p class="muted" style="margin:6px 0 0">' + (inc ? 'แบบตารางของผู้รับจ้าง: ตัวเลขในช่องคือ % ของทั้งโครงการที่รายการนั้นทำได้ในงวด (เช่น 0.92) ระบบแปลงเป็น % ของรายการให้จากน้ำหนักงาน • ช่องว่าง = ไม่มีผลงานในงวดนั้น'
       : 'ตัวเลขในช่องคือ % ความคืบหน้าสะสมของรายการ ณ วันสิ้นงวด (0–100) • กรอกเฉพาะงวดที่เปลี่ยนแปลง ช่องว่างจะใช้ค่าเดิมต่อไป (ตัวเลขสีจาง)') + '</p></div>';
-  if (!list.length) return h + '<div class="card empty">ยังไม่มีรายการงาน</div>';
+  if (!list.length) return h + '<div class="card empty"><p><b>โครงการนี้ยังไม่มีรายการงาน</b> จึงยังกรอกแบบแยกรายรายการไม่ได้</p>' +
+    '<p class="muted">ตารางนี้ต้องมีรายการงาน (เนื้องาน มูลค่า/น้ำหนัก วันเริ่ม–เสร็จตามแผน) ก่อน เช่น 17 รายการตามแผนงานของผู้รับจ้าง • ชื่อในช่อง "งานส่วน" ของตั้งค่าโครงการเป็นเพียงกลุ่มงาน ไม่ใช่รายการงาน' +
+    (isMulti() && parts().length > 5 ? ' • ถ้าใส่เนื้องานแต่ละรายการไว้เป็นงานส่วน แนะนำให้ย้ายมาเป็นรายการงานแทน แล้วรวมงานส่วนเหลือเฉพาะกลุ่มใหญ่ (อาคาร รั้ว ถนน ฯลฯ)' : '') + '</p>' +
+    '<div class="row" style="justify-content:center"><button class="btn" data-act="pasteTasks">' + ic('upload') + 'วางรายการงานจาก Excel</button><button class="btn sec" data-go="/p/' + pid + '/tasks">' + ic('plus') + 'ไปเพิ่มรายการงาน</button>' +
+    '<button class="btn sec" data-bktab="proj">ใช้แบบผลงานรวมทั้งโครงการแทน</button></div></div>';
   h += '<div class="card"><div class="tw bkgrid"><table class="tbl" id="bkTask"><thead><tr><th class="bkfix">รายการงาน</th><th class="num">น้ำหนัก</th>' + per.map(function (p) {
     return '<th class="num" title="' + th(p.s) + ' – ' + th(p.e) + '">งวด ' + p.n + '<br><span class="muted">' + th(p.e, true) + '</span></th>'; }).join('') + '</tr></thead><tbody>' +
     list.map(function (o) { var t = o.t, wt = w(t), prev = taskPctAt(hist, t.id, first);
