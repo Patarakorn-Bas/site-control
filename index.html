@@ -171,6 +171,10 @@ table.tbl tfoot td{font-weight:700;background:var(--head);border-top:1px solid v
   main{padding:0!important;max-width:none}.doc{border:0;padding:0;max-width:none}
   @page{size:A4;margin:15mm 14mm}
 }
+.bkgrid{max-height:70vh;overflow:auto}.bkgrid table{font-size:16px}.bkgrid th,.bkgrid td{padding:4px 6px;white-space:nowrap}
+.bkgrid td.bkfix{white-space:normal}.bkgrid .bkfix{position:sticky;left:0;background:var(--card);z-index:2;min-width:220px;max-width:340px;box-shadow:1px 0 0 var(--line)}
+.bkgrid thead th{position:sticky;top:0;background:var(--head);z-index:1}.bkgrid thead th.bkfix{z-index:3}
+input.bkin{width:70px;padding:4px 6px;text-align:right;min-height:34px}#bkProj input.bkin{width:120px}input.bkin::placeholder{color:var(--soft);opacity:.8}
 </style>
 </head>
 <body>

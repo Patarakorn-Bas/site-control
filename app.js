@@ -2,7 +2,7 @@
    คุมงานก่อสร้าง (PWA) — ใช้งานคนเดียว ข้อมูลเก็บในเครื่อง (IndexedDB)
    ===================================================================== */
 'use strict';
-var APP_VERSION = '2.6.0';
+var APP_VERSION = '2.7.1';
 
 /* ---------------- IndexedDB ---------------- */
 var DB_NAME = 'sitecontrol', DB_VER = 4;
@@ -141,7 +141,12 @@ function planAt(d, rev, tasks) {
   tasks = tasks || S.tasks; var w = weightFn(tasks);
   return tasks.reduce(function (a, t) { return a + w(t) * spanPct(D(rev && t.rs ? t.rs : t.bs), D(rev && t.rf ? t.rf : t.bf), d); }, 0);
 }
-function actualNow(tasks) { tasks = tasks || S.tasks; var w = weightFn(tasks); return tasks.reduce(function (a, t) { return a + w(t) * num(t.pct) / 100; }, 0); }
+function actualTasksNow(tasks) { tasks = tasks || S.tasks; var w = weightFn(tasks); return tasks.reduce(function (a, t) { return a + w(t) * num(t.pct) / 100; }, 0); }
+function actualNow(tasks) { return Math.max(actualTasksNow(tasks), seriesAt(iso(today()))); }
+// ผลงานสะสมระดับโครงการที่บันทึกย้อนหลัง (เช่น จากรายงานความก้าวหน้าของผู้รับจ้าง) – ใช้ค่าที่มากกว่าระหว่างค่านี้กับผลรวมรายรายการ
+function seriesList(p) { p = p || S.P; return ((p && p.actualSeries) || []).filter(function (x) { return x && D(x.date) && x.pct !== '' && x.pct != null && !isNaN(parseFloat(x.pct)); }).sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : 0; }); }
+function seriesAt(dIso, p) { var L = seriesList(p), v = 0; for (var i = 0; i < L.length && L[i].date <= dIso; i++) v = num(L[i].pct) / 100; return v; }
+function seriesDominant() { return seriesList().length > 0 && seriesAt(iso(today())) > actualTasksNow() + 1e-9; }
 // ประวัติผลงาน: % ของรายการ ณ วันที่ d = บันทึกล่าสุดที่วันที่ ≤ d
 function histIndex() {
   var m = {};
@@ -152,7 +157,7 @@ function histIndex() {
 function taskPctAt(hist, taskId, dIso) { var a = hist[taskId], v = 0; if (!a) return 0; for (var i = 0; i < a.length && a[i].date <= dIso; i++) v = num(a[i].pct); return v; }
 function actualAt(d, hist) {
   hist = hist || histIndex(); var w = weightFn(), di = iso(d);
-  return S.tasks.reduce(function (a, t) { return a + w(t) * taskPctAt(hist, t.id, di) / 100; }, 0);
+  return Math.max(seriesAt(di), S.tasks.reduce(function (a, t) { return a + w(t) * taskPctAt(hist, t.id, di) / 100; }, 0));
 }
 function weekRange(n) { var s = addDays(projStart(), 7 * (n - 1)); return { n: n, start: s, end: addDays(s, 6) }; }
 function weekOf(d) { return Math.max(1, Math.floor(diffDays(d, projStart()) / 7) + 1); }
@@ -248,6 +253,7 @@ var NAV_P = [['dash', 'dash', 'ภาพรวมโครงการ', 'ภา
 function renderNav() {
   var r = S.route, inP = r[0] === 'p' && S.P, cur = inP ? (r[2] || 'dash') : (r[0] || 'home');
   if (cur === 'print') cur = { mat: 'mat', pay: 'fin' }[r[3]] || r[3];
+  if (cur === 'back') cur = 'tasks';
   var items = inP ? NAV_P.map(function (n) { return ['/p/' + S.P.id + (n[0] === 'dash' ? '' : '/' + n[0]), n[1], n[2], n[0], n[3]]; })
     : [['/', 'folder', 'โครงการทั้งหมด', 'home', 'โครงการ'], ['/app', 'settings', 'ตั้งค่าและสำรองข้อมูล', 'app', 'ตั้งค่า']];
   var btn = function (n, short) { return '<button data-go="' + esc(n[0]) + '" class="' + (cur === n[3] ? 'on' : '') + '"' + (cur === n[3] ? ' aria-current="page"' : '') + '>' + ic(n[1]) + '<span>' + esc(short ? n[4] || n[2] : n[2]) + '</span></button>'; };
@@ -268,7 +274,7 @@ async function render() {
       if (!S.P || S.P.id !== r[1]) await loadProject(r[1]);
       if (!S.P) { go('/'); return; }
       var v = r[2] || 'dash';
-      var views = { dash: vDash, tasks: vTasks, daily: vDaily, weekly: vWeekly, mat: vMat, fin: vFin, set: vProjSet, print: vPrint };
+      var views = { dash: vDash, tasks: vTasks, back: vBack, daily: vDaily, weekly: vWeekly, mat: vMat, fin: vFin, set: vProjSet, print: vPrint };
       renderNav();
       m.innerHTML = await (views[v] || vDash)(r.slice(3));
     } else {
@@ -558,13 +564,15 @@ async function vDash() {
   var risk = S.submittals.filter(function (s) { var k = subRisk(s).k; return k === 'bad' || k === 'warn'; }).length;
   var todayRep = S.daily.filter(function (x) { return x.date === iso(d); })[0];
   var h = '';
+  if (diffDays(d, projStart()) > 20 && !backHasData() && !S.progress.some(function (x) { return x.date < iso(addDays(d, -14)); }))
+    h += '<div class="banner warn"><span class="grow">โครงการเริ่มมาแล้ว ' + diffDays(d, projStart()) + ' วัน แต่ยังไม่มีประวัติผลงานช่วงที่ผ่านมา – กราฟ S-Curve จะเริ่มจาก 0% • บันทึกผลงานสะสมรายงวดย้อนหลังจากเอกสารผู้รับจ้าง/ใบตรวจรับ เพื่อให้กราฟและรายงานถูกต้อง</span><button class="btn sm" data-go="/p/' + pid + '/back">บันทึกผลงานย้อนหลัง</button></div>';
   if (!todayRep && d >= projStart() && d <= addDays(projEnd(), 60)) h += '<div class="banner info"><span class="grow">ยังไม่ได้บันทึกรายงานประจำวันของวันนี้</span><button class="btn sm" data-go="/p/' + pid + '/daily/' + iso(d) + '">บันทึกเลย</button></div>';
   var L = ldInfo(), nextI = sortedInst().filter(function (i) { return !i.accepted; })[0];
   h = pageHead('ภาพรวมโครงการ', 'ข้อมูล ณ วันที่ ' + th(d) + ' • วันที่ ' + Math.max(0, el) + ' ของสัญญา', badge(spiState(ac, pl)) +
     '<button class="btn sec" data-act="printDash">' + ic('print') + 'พิมพ์</button><button class="btn" data-act="exportV4">' + ic('excel') + 'ส่งออกรายงาน Excel</button>') + h;
   h += '<div class="card"><h2>ความก้าวหน้าและระยะเวลา</h2><div class="kpis">' +
     kpi('ผลงานตามแผน', pct(pl), (S.tasks.some(function (t) { return t.rs || t.rf; }) ? 'แผนเร่งรัด ' + pct(rv) : '&nbsp;')) +
-    kpi('ผลงานจริง', pct(ac), S.tasks.length + ' รายการ', ac >= pl ? 'ok-t' : 'bad-t') +
+    kpi('ผลงานจริง', pct(ac), seriesDominant() ? 'ตามผลงานรวมที่บันทึก ณ ' + th(seriesList().slice(-1)[0].date, true) : S.tasks.length + ' รายการ', ac >= pl ? 'ok-t' : 'bad-t') +
     kpi('เร็ว/ช้ากว่าแผน', (ac - pl >= 0 ? '+' : '') + pct(ac - pl), 'ประมาณ ' + (vd >= 0 ? '+' : '') + vd + ' วัน', ac >= pl ? 'ok-t' : 'bad-t') +
     kpi('SPI', spi.toFixed(2), spi >= 1 ? 'ตามแผน' : spi >= 0.9 ? 'เฝ้าระวัง' : 'ล่าช้ามาก', spi >= 1 ? 'ok-t' : spi >= 0.9 ? 'warn-t' : 'bad-t') +
     kpi('ระยะเวลา', Math.max(0, el) + ' / ' + tot + ' วัน', rem >= 0 ? 'คงเหลือ ' + rem + ' วัน' : 'เลยกำหนด ' + (-rem) + ' วัน', rem < 0 ? 'bad-t' : '') +
@@ -575,7 +583,7 @@ async function vDash() {
     kpi('งวดถัดไป', nextI ? 'งวดที่ ' + esc(nextI.no) : '-', nextI ? 'กำหนด ' + th(nextI.due, true) + ' • ' + instStatus(nextI).t : (S.installments.length ? 'ตรวจรับครบแล้ว' : 'ยังไม่บันทึกงวดงาน'), nextI && instStatus(nextI).k === 'bad' ? 'bad-t' : '') +
     kpi('ค่าปรับคาดการณ์', L.fLd == null ? '-' : money(L.fLd), L.fDelay ? 'คาดว่าช้ากว่าสัญญา ' + L.fDelay + ' วัน' : 'คาดว่าทันสัญญา', L.fDelay ? 'bad-t' : 'ok-t') + '</div></div>';
   h += '<div class="card"><h2>S-Curve แผนเทียบผลงานจริง</h2><div class="chartbox"><canvas id="curve" aria-label="กราฟ S-Curve"></canvas></div>' +
-    '<p class="muted">เส้นผลงานจริงสร้างจากประวัติการอัปเดต % ของแต่ละรายการโดยอัตโนมัติ</p></div>';
+    '<p class="muted">เส้นผลงานจริงสร้างจากประวัติการอัปเดต % ของแต่ละรายการโดยอัตโนมัติ' + (backHasData() ? ' • มีข้อมูลบันทึกย้อนหลัง' + (S.P.backSrc ? ' (อ้างอิง: ' + esc(S.P.backSrc) + ')' : '') + ' <a href="#/p/' + pid + '/back">ดู/แก้ไข</a>' : ' • <a href="#/p/' + pid + '/back">บันทึกผลงานย้อนหลัง</a>') + '</p></div>';
   after(function () { drawCurve($('#curve')); });
   if (isMulti()) {
     h += '<div class="card"><h2>ความก้าวหน้ารายงานส่วน</h2><div class="tw"><table><tr><th>งานส่วน</th><th class="num">น้ำหนัก</th><th class="hide-m">ช่วงแผน</th><th class="num">แผน</th><th class="num">จริง</th><th class="num">SPI</th><th>สถานะ</th></tr>';
@@ -623,7 +631,7 @@ function drawCurve(canvas, upTo) {
 var TF = { part: '', st: '', q: '' };
 async function vTasks() {
   var pid = S.P.id, d = today(), w = weightFn();
-  var h = pageHead('แผนงานและผลงาน', S.tasks.length + ' รายการ • ผลงานรวม ' + pct(actualNow()) + ' • แผน ' + pct(planAt(d)), '<button class="btn sec" data-act="pasteTasks">' + ic('upload') + 'วางจาก Excel</button><button class="btn" data-task="">' + ic('plus') + 'เพิ่มรายการ</button>') +
+  var h = pageHead('แผนงานและผลงาน', S.tasks.length + ' รายการ • ผลงานรวม ' + pct(actualNow()) + ' • แผน ' + pct(planAt(d)), '<button class="btn sec" data-go="/p/' + pid + '/back">' + ic('edit') + 'บันทึกย้อนหลัง</button><button class="btn sec" data-act="pasteTasks">' + ic('upload') + 'วางจาก Excel</button><button class="btn" data-task="">' + ic('plus') + 'เพิ่มรายการ</button>') +
     '<div class="card"><div class="row"><input class="i grow" id="tq" placeholder="ค้นหารายการงาน…" value="' + esc(TF.q) + '" style="max-width:340px">' +
     '<div class="chips">' + [['', 'ทั้งหมด'], ['active', 'กำลังทำ'], ['bad', 'ล่าช้า'], ['todo', 'ยังไม่เริ่ม'], ['done', 'เสร็จ']].map(function (x) {
       return '<button class="chip' + (TF.st === x[0] ? ' on' : '') + '" data-tf="' + x[0] + '">' + x[1] + '</button>'; }).join('') + '</div></div>' +
@@ -715,7 +723,7 @@ function openProgress(id, presetDate) {
     '<label class="f" for="pNote">หมายเหตุ / ปัญหา</label><textarea id="pNote" class="i" rows="2">' + esc(t.remark) + '</textarea>' +
     '<p class="muted">วัด % จากปริมาณงานจริง เช่น ตอกเข็ม 45 จาก 60 ต้น = 75% ไม่ใช้เวลาหรือเงินที่จ่ายไป</p>' +
     (hist.length ? '<details class="pgroup"><summary>ประวัติผลงาน (' + hist.length + ')</summary><table><tr><th>วันที่</th><th class="num">%</th><th>ที่มา</th><th></th></tr>' +
-      hist.map(function (x) { return '<tr><td>' + th(x.date, true) + '</td><td class="num">' + num(x.pct) + '%</td><td class="muted">' + esc(x.source === 'daily' ? 'รายงานรายวัน' : x.source === 'import' ? 'นำเข้า' : 'อัปเดต') + (x.note && x.source !== 'import' ? ' – ' + esc(x.note) : '') + '</td><td><button class="fdel" data-hdel="' + x.id + '" aria-label="ลบประวัตินี้">ลบ</button></td></tr>'; }).join('') + '</table></details>' : ''),
+      hist.map(function (x) { return '<tr><td>' + th(x.date, true) + '</td><td class="num">' + num(x.pct) + '%</td><td class="muted">' + esc(x.source === 'daily' ? 'รายงานรายวัน' : x.source === 'import' ? 'นำเข้า' : x.source === 'backfill' ? 'บันทึกย้อนหลัง' : 'อัปเดต') + (x.note && x.source !== 'import' ? ' – ' + esc(x.note) : '') + '</td><td><button class="fdel" data-hdel="' + x.id + '" aria-label="ลบประวัตินี้">ลบ</button></td></tr>'; }).join('') + '</table></details>' : ''),
     async function (bg) {
       var p = num(val(bg, 'pPct')), dt = val(bg, 'pDate'), as = val(bg, 'pAs'), af = val(bg, 'pAf');
       if (!D(dt)) throw new Error('ระบุวันที่'); if (p < 0 || p > 100) throw new Error('% ต้องอยู่ระหว่าง 0–100');
@@ -756,12 +764,192 @@ function pasteTasks() {
   bg.querySelector('#imp').oninput = function (e) { var r = parse(e.target.value); bg.querySelector('#impPrev').textContent = 'อ่านได้ ' + r.ok.length + ' แถว' + (r.bad.length ? ' • อ่านไม่ได้ ' + r.bad.length + ' แถว (แถวที่ ' + r.bad.slice(0, 6).join(', ') + ')' : ''); };
 }
 
+/* ---------------- บันทึกผลงานย้อนหลัง (โครงการที่เริ่มก่อนใช้แอป / ไม่ได้บันทึกรายวัน) ---------------- */
+var BK = { tab: 'proj', per: '10d', unit: 'cum', part: '' };
+// แบ่งงวดตั้งแต่วันเริ่มสัญญาถึงวันนี้: 10d = ตัดทุกวันที่ 10, 20 และสิ้นเดือน (แบบเดียวกับชีต S-Curve) • 7d = รายสัปดาห์ • m = รายเดือน
+function backPeriods(mode) {
+  var st = projStart(), d = today(), out = [], s = st;
+  var endOf = function (x) {
+    if (mode === '7d') return addDays(x, 6);
+    if (mode === 'm') return new Date(x.getFullYear(), x.getMonth() + 1, 0);
+    var k = x.getDate(); return k <= 10 ? new Date(x.getFullYear(), x.getMonth(), 10) : k <= 20 ? new Date(x.getFullYear(), x.getMonth(), 20) : new Date(x.getFullYear(), x.getMonth() + 1, 0);
+  };
+  for (var i = 0; i < 400 && s <= d; i++) { var e = endOf(s); out.push({ n: i + 1, s: s, e: e > d ? d : e, partial: e > d }); s = addDays(e, 1); }
+  return out;
+}
+function backHasData() { return seriesList().length > 0 || S.progress.some(function (x) { return x.source === 'backfill'; }); }
+function backSrcText() { return BK.pid === (S.P && S.P.id) && BK.src != null ? BK.src : (S.P && S.P.backSrc) || ''; }
+async function vBack() {
+  var pid = S.P.id, per = backPeriods(BK.per), hist = histIndex(), w = weightFn();
+  var h = pageHead('บันทึกผลงานย้อนหลัง', 'สำหรับโครงการที่เริ่มงานก่อนใช้แอป หรือช่วงที่ไม่ได้บันทึกรายงานประจำวัน – กราฟ S-Curve รายงาน และไฟล์ Excel จะใช้ข้อมูลนี้ทันที',
+    '<button class="btn sec" data-go="/p/' + pid + '/tasks">' + ic('chevl') + 'กลับหน้าผลงาน</button>');
+  h += '<div class="banner info"><span class="grow"><b>ใช้ข้อมูลจากเอกสารที่ตรวจสอบได้เท่านั้น</b> เช่น รายงานความก้าวหน้าของผู้รับจ้างที่ผู้ควบคุมงานรับรอง ใบส่งงานงวด/ใบตรวจรับ รูปถ่ายที่มีวันที่ หรือบันทึกการตรวจงาน • ' +
+    'ระบบเก็บที่มาไว้กับทุกค่าที่บันทึก และรายงานจะระบุว่าเป็นข้อมูลบันทึกย้อนหลัง • ไม่ควรย้อนสร้างรายงานประจำวัน (สภาพอากาศ คนงาน เครื่องจักร) ของวันที่ไม่ได้บันทึกไว้จริง</span></div>';
+  h += '<div class="card"><div class="grid2">' + inp('bkSrc', 'อ้างอิงเอกสาร (บันทึกไว้กับข้อมูลทุกค่า)', backSrcText(), '', 'placeholder="เช่น รายงานความก้าวหน้าผู้รับจ้าง ณ 30 เม.ย. 69 (ลงนามรับรองแล้ว)"') +
+    '<div><label class="f">ช่วงงวด</label><div class="seg" id="bkPer">' + [['10d', 'ทุก 10 วัน'], ['7d', 'รายสัปดาห์'], ['m', 'รายเดือน']].map(function (x) {
+      return '<button type="button" data-bkper="' + x[0] + '" class="' + (BK.per === x[0] ? 'on' : '') + '">' + x[1] + '</button>'; }).join('') + '</div></div></div>' +
+    '<label class="f">วิธีบันทึก</label><div class="seg">' + [['proj', 'ผลงานรวมทั้งโครงการ (รายงวด)'], ['task', 'แยกรายรายการงาน (ตาราง)']].map(function (x) {
+      return '<button type="button" data-bktab="' + x[0] + '" class="' + (BK.tab === x[0] ? 'on' : '') + '">' + x[1] + '</button>'; }).join('') + '</div>' +
+    '<p class="muted" style="margin:6px 0 0">' + (BK.tab === 'proj' ? 'เร็วที่สุด – กรอกเฉพาะ % ผลงานสะสมของทั้งโครงการแต่ละงวด (เช่น ตัวเลขแถว "Actual : % Accumulate" ในตารางของผู้รับจ้าง) ใช้กับ S-Curve ภาพรวม รายงานสัปดาห์ และไฟล์ Excel • ตัวเลขรายงานส่วน/หมวดงานยังคิดจากผลงานรายรายการ'
+      : 'ละเอียดที่สุด – กรอกผลงานของแต่ละรายการในแต่ละงวด ระบบบันทึกเป็นประวัติผลงานของรายการนั้น ทำให้ทุกหน้าจอ รายงานส่วน/หมวดงาน และไฟล์ Excel ตรงกันทั้งหมด') + '</p></div>';
+  if (!per.length) return h + '<div class="card empty">โครงการยังไม่เริ่ม (วันเริ่มสัญญา ' + th(projStart()) + ')</div>';
+  if (BK.tab === 'proj') {
+    var L = seriesList(), byDate = {}; L.forEach(function (x) { byDate[x.date] = x; });
+    var extra = L.filter(function (x) { return !per.some(function (p) { return iso(p.e) === x.date; }); });
+    h += '<div class="card"><div class="card-h"><h2>ผลงานสะสมทั้งโครงการ ณ วันสิ้นงวด</h2><div class="row"><button class="btn sm sec" data-act="bkPaste">วางตัวเลขจาก Excel/PDF</button>' + (L.length ? '<button class="btn sm ghost bad-t" data-act="bkClearProj">ล้างค่าทั้งหมด</button>' : '') + '</div></div>' +
+      '<div class="tw"><table class="tbl" id="bkProj"><thead><tr><th>งวด</th><th>ช่วงวันที่</th><th class="num">แผนสะสม</th><th class="num">จากรายรายการ</th><th class="num" style="min-width:120px">ผลงานจริงสะสม (%)</th><th class="num">ผลต่าง</th></tr></thead><tbody>' +
+      per.map(function (p, i) { var di = iso(p.e), pl = planAt(p.e), tb = S.tasks.reduce(function (a, t) { return a + w(t) * taskPctAt(hist, t.id, di) / 100; }, 0), x = byDate[di];
+        return '<tr><td>' + p.n + '</td><td>' + th(p.s, true) + ' – ' + th(p.e, true) + (p.partial ? ' <span class="muted">(ถึงวันนี้)</span>' : '') + '</td><td class="num">' + pct(pl) + '</td><td class="num muted">' + (tb ? pct(tb) : '-') + '</td>' +
+          '<td class="num"><input class="i bkin" inputmode="decimal" data-bkp="' + i + '" data-date="' + di + '" data-plan="' + pl + '" value="' + (x ? esc(String(x.pct)) : '') + '" aria-label="ผลงานจริงสะสม งวด ' + p.n + '"></td><td class="num" data-bkd="' + i + '">' + (x ? '<span class="' + (num(x.pct) / 100 >= pl ? 'ok-t' : 'bad-t') + '">' + (num(x.pct) / 100 - pl >= 0 ? '+' : '') + pct(num(x.pct) / 100 - pl) + '</span>' : '') + '</td></tr>'; }).join('') +
+      '</tbody></table></div>' +
+      (extra.length ? '<p class="muted">มีค่าที่บันทึกไว้ในวันที่อื่นอีก ' + extra.length + ' ค่า (' + extra.map(function (x) { return th(x.date, true) + ' = ' + num(x.pct) + '%'; }).join(', ') + ') – ยังใช้งานอยู่</p>' : '') +
+      '<p class="muted">กรอกเป็น % เช่น 5.13 • เว้นว่างงวดที่ไม่มีข้อมูล (กราฟจะใช้ค่าล่าสุดต่อไป) • ระบบใช้ค่าที่มากกว่าระหว่างตัวเลขนี้กับผลรวมรายรายการ เมื่อเริ่มอัปเดตรายรายการแล้วจึงไม่ต้องลบค่าเก่า</p>' +
+      '<div class="row"><button class="btn" data-act="bkSaveProj">' + ic('check') + 'บันทึกผลงานรวม</button></div></div>';
+    after(function () { $$('[data-bkp]').forEach(function (el) { el.oninput = function () { var c = $('[data-bkd="' + el.dataset.bkp + '"]'), v = el.value.replace('%', '').trim(), pl = +el.dataset.plan;
+      c.innerHTML = v === '' || isNaN(parseFloat(v)) ? '' : '<span class="' + (num(v) / 100 >= pl ? 'ok-t' : 'bad-t') + '">' + (num(v) / 100 - pl >= 0 ? '+' : '') + pct(num(v) / 100 - pl) + '</span>'; }; }); });
+    return h;
+  }
+  // ---- ตารางรายรายการ
+  var list = wbsList().filter(function (o) { return !BK.part || o.t.part === BK.part; });
+  var first = iso(addDays(per[0].s, -1)), inc = BK.unit === 'inc';
+  h += '<div class="card"><div class="row" style="gap:16px;align-items:flex-end"><div><label class="f">หน่วยที่กรอก</label><div class="seg">' + [['cum', '% สะสมของรายการ'], ['inc', '% ของโครงการที่ทำได้ในงวด']].map(function (x) {
+      return '<button type="button" data-bkunit="' + x[0] + '" class="' + (BK.unit === x[0] ? 'on' : '') + '">' + x[1] + '</button>'; }).join('') + '</div></div>' +
+    (isMulti() ? '<div><label class="f" for="bkPart">งานส่วน</label><select id="bkPart" class="i">' + opts([['', 'ทุกงานส่วน']].concat(parts()), BK.part) + '</select></div>' : '') + '</div>' +
+    '<p class="muted" style="margin:6px 0 0">' + (inc ? 'แบบตารางของผู้รับจ้าง: ตัวเลขในช่องคือ % ของทั้งโครงการที่รายการนั้นทำได้ในงวด (เช่น 0.92) ระบบแปลงเป็น % ของรายการให้จากน้ำหนักงาน • ช่องว่าง = ไม่มีผลงานในงวดนั้น'
+      : 'ตัวเลขในช่องคือ % ความคืบหน้าสะสมของรายการ ณ วันสิ้นงวด (0–100) • กรอกเฉพาะงวดที่เปลี่ยนแปลง ช่องว่างจะใช้ค่าเดิมต่อไป (ตัวเลขสีจาง)') + '</p></div>';
+  if (!list.length) return h + '<div class="card empty">ยังไม่มีรายการงาน</div>';
+  h += '<div class="card"><div class="tw bkgrid"><table class="tbl" id="bkTask"><thead><tr><th class="bkfix">รายการงาน</th><th class="num">น้ำหนัก</th>' + per.map(function (p) {
+    return '<th class="num" title="' + th(p.s) + ' – ' + th(p.e) + '">งวด ' + p.n + '<br><span class="muted">' + th(p.e, true) + '</span></th>'; }).join('') + '</tr></thead><tbody>' +
+    list.map(function (o) { var t = o.t, wt = w(t), prev = taskPctAt(hist, t.id, first);
+      return '<tr><td class="bkfix"><span class="muted">' + esc(o.wbs) + '</span> ' + esc(t.desc) + '</td><td class="num">' + pct(wt) + '</td>' + per.map(function (p, i) {
+        var cur = taskPctAt(hist, t.id, iso(p.e)), v = '', ph = '';
+        if (inc) { var dv = (cur - prev) * wt; v = Math.abs(dv) > 1e-9 ? String(+dv.toFixed(3)) : ''; }
+        else { if (Math.abs(cur - prev) > 1e-9) v = String(+cur.toFixed(2)); else ph = cur ? String(+cur.toFixed(2)) : ''; }
+        prev = cur;
+        return '<td class="num"><input class="i bkin" inputmode="decimal" data-bt="' + t.id + '" data-i="' + i + '" value="' + v + '"' + (ph ? ' placeholder="' + ph + '"' : '') + (inc && !wt ? ' disabled title="รายการนี้ไม่มีน้ำหนักงาน"' : '') + '></td>'; }).join('') + '</tr>'; }).join('') +
+    '</tbody><tfoot><tr><td class="bkfix">ผลงานสะสมรวม' + (BK.part ? ' (ทั้งโครงการ)' : '') + '</td><td class="num">' + pct(list.reduce(function (a, o) { return a + w(o.t); }, 0), 1) + '</td>' + per.map(function (p, i) { return '<td class="num" data-bksum="' + i + '">' + pct(actualAt(p.e, hist)) + '</td>'; }).join('') + '</tr>' +
+    '<tr><td class="bkfix">แผนสะสม</td><td></td>' + per.map(function (p) { return '<td class="num muted">' + pct(planAt(p.e)) + '</td>'; }).join('') + '</tr></tfoot></table></div>' +
+    '<div class="row" style="margin-top:10px"><button class="btn" data-act="bkSaveTask">' + ic('check') + 'บันทึกผลงานรายรายการ</button><span class="muted">แถวรวมด้านล่างคำนวณใหม่ทุกครั้งที่กรอก</span></div></div>';
+  after(function () { $$('#bkTask input[data-bt]').forEach(function (el) { el.oninput = function () { var r = backGridRead(); if (!r) return;
+    per.forEach(function (p, i) { var c = $('[data-bksum="' + i + '"]'); if (c) c.textContent = pct(r.tot[i]); }); }; }); });
+  return h;
+}
+// อ่านตารางรายรายการ → % สะสมใหม่ของแต่ละรายการในแต่ละงวด
+function backGridRead() {
+  var per = backPeriods(BK.per), hist = histIndex(), w = weightFn(), first = per.length ? iso(addDays(per[0].s, -1)) : '', inc = BK.unit === 'inc';
+  var cells = {}; $$('#bkTask input[data-bt]').forEach(function (el) { (cells[el.dataset.bt] = cells[el.dataset.bt] || [])[+el.dataset.i] = el.value.replace('%', '').trim(); });
+  var rows = {}, warn = [], tot = per.map(function () { return 0; });
+  S.tasks.forEach(function (t) {
+    var wt = w(t), prev = taskPctAt(hist, t.id, first), c = cells[t.id], out = [];
+    per.forEach(function (p, i) {
+      var old = taskPctAt(hist, t.id, iso(p.e)), raw = c ? c[i] : null, v;
+      if (!c) v = old;
+      else if (raw === '' || raw == null || isNaN(parseFloat(raw))) v = prev;
+      else if (inc) v = wt ? prev + num(raw) / wt : prev;
+      else v = num(raw);
+      if (v > 100.5 || v < -0.0001) warn.push(t.desc); v = Math.max(0, Math.min(100, Math.round(v * 100) / 100));
+      if (c && v < prev - 1e-9) warn.push(t.desc);
+      out.push({ date: iso(p.e), v: v, old: old }); tot[i] += wt * v / 100; prev = v;
+    });
+    if (c) rows[t.id] = out;
+  });
+  tot = tot.map(function (x, i) { return Math.max(x, seriesAt(iso(per[i].e))); });
+  return { rows: rows, tot: tot, warn: warn.filter(function (x, i, a) { return a.indexOf(x) === i; }) };
+}
+async function backSaveTask() {
+  var r = backGridRead(), src = ($('#bkSrc') || {}).value || '', n = 0, now = Date.now();
+  if (r.warn.length && !(await confirmBox('มีรายการที่ % ลดลงหรือเกิน 100% (' + r.warn.slice(0, 3).join(', ') + (r.warn.length > 3 ? ' ฯลฯ' : '') + ') – ระบบจะปรับให้อยู่ในช่วง 0–100 บันทึกต่อหรือไม่?', 'บันทึกต่อ'))) return;
+  var touched = [];
+  for (var id in r.rows) {
+    var t = taskById(id); if (!t) continue; var ch = false, lastNew = null;
+    var orig = S.progress.filter(function (p) { return p.taskId === id; }).sort(function (x, y) { return x.date < y.date ? -1 : x.date > y.date ? 1 : (x.ts || 0) - (y.ts || 0); });
+    for (var i = 0; i < r.rows[id].length; i++) {
+      var x = r.rows[id][i], lo = null;
+      for (var j = 0; j < orig.length && orig[j].date <= x.date; j++) lo = orig[j];
+      // ค่าที่มีผลอยู่ ณ วันสิ้นงวดนี้ (รวมค่าที่เพิ่งบันทึกในรอบนี้) – บันทึกเฉพาะงวดที่ค่าเปลี่ยน
+      var eff = lastNew && (!lo || lastNew.date >= lo.date) ? lastNew.pct : lo ? num(lo.pct) : 0;
+      if (Math.abs(x.v - eff) < 1e-6) continue;
+      lastNew = { date: x.date, pct: x.v };
+      var ex = S.progress.filter(function (p) { return p.taskId === id && p.date === x.date && p.source === 'backfill'; })[0];
+      if (ex) { ex.pct = x.v; ex.note = src; ex.ts = now + n; await DB.put('progress', ex); }
+      else { var e = { id: uid() + n, projectId: S.P.id, taskId: id, date: x.date, pct: x.v, note: src, source: 'backfill', ts: now + n }; await DB.put('progress', e); S.progress.push(e); }
+      n++; ch = true;
+    }
+    if (ch) touched.push(t);
+  }
+  for (var k = 0; k < touched.length; k++) await syncTaskPct(touched[k]);
+  if (src !== backSrcText()) { S.P.backSrc = src; await saveProject(); }
+  toast(n ? 'บันทึกผลงานย้อนหลัง ' + n + ' ค่า (' + touched.length + ' รายการงาน)' : 'ไม่มีค่าที่เปลี่ยนแปลง', false, 3500); render();
+}
+async function backSaveProj() {
+  var src = ($('#bkSrc') || {}).value || '', shown = {}, add = [], bad = [];
+  $$('[data-bkp]').forEach(function (el) { var di = el.dataset.date, v = el.value.replace('%', '').replace(/,/g, '').trim(); shown[di] = 1;
+    if (v === '' || v === '-') return; if (isNaN(parseFloat(v)) || num(v) < 0 || num(v) > 100) { bad.push(th(di, true)); return; } add.push({ date: di, pct: +num(v).toFixed(4), src: src }); });
+  if (bad.length) throw new Error('ค่าไม่ถูกต้อง (ต้องเป็น 0–100) ที่งวด ' + bad.join(', '));
+  var keep = seriesList().filter(function (x) { return !shown[x.date]; }), all = keep.concat(add).sort(function (a, b) { return a.date < b.date ? -1 : 1; });
+  var down = all.filter(function (x, i) { return i && num(x.pct) < num(all[i - 1].pct) - 1e-9; });
+  if (down.length && !(await confirmBox('ผลงานสะสมลดลงที่ ' + down.map(function (x) { return th(x.date, true); }).join(', ') + ' – ตรวจตัวเลขอีกครั้ง หรือกดบันทึกต่อ', 'บันทึกต่อ'))) return;
+  S.P.actualSeries = all; S.P.backSrc = src; await saveProject();
+  toast('บันทึกผลงานรวม ' + add.length + ' งวดแล้ว – ดูกราฟได้ที่หน้าภาพรวม', false, 3500); render();
+}
+function backPaste() {
+  var ins = $$('[data-bkp]');
+  var bg = modal('<h2>วางตัวเลขผลงานสะสม</h2><p class="muted">คัดลอกตัวเลขทั้งแถวหรือทั้งคอลัมน์ (เช่น 0.92 2.82 3.12 4.40 …) แล้ววางด้านล่าง ระบบจะเติมลงตารางตามลำดับงวด • "-" หรือช่องว่าง = ไม่มีข้อมูลงวดนั้น</p>' +
+    '<label class="f" for="bkStart">เริ่มเติมที่งวด</label><select id="bkStart" class="i">' + ins.map(function (el, i) { return '<option value="' + i + '">งวด ' + (i + 1) + ' (สิ้นงวด ' + th(el.dataset.date, true) + ')</option>'; }).join('') + '</select>' +
+    '<label class="f" for="bkTxt">ตัวเลข</label><textarea id="bkTxt" class="i" rows="5"></textarea><div id="bkPrev" class="muted"></div>', function (bg) {
+      var vals = parse(val(bg, 'bkTxt')), st = +val(bg, 'bkStart'); if (!vals.length) throw new Error('ไม่พบตัวเลข');
+      vals.forEach(function (v, i) { var el = ins[st + i]; if (el) { el.value = v; el.oninput && el.oninput(); } });
+      toast('เติม ' + Math.min(vals.length, ins.length - st) + ' งวด – ตรวจแล้วกด "บันทึกผลงานรวม"');
+    }, 'เติมลงตาราง');
+  var parse = function (txt) { return String(txt).replace(/%/g, '').split(/[\s\t\n;|]+/).filter(function (x) { return x !== ''; }).map(function (x) { return /^-+$/.test(x) ? '' : x.replace(/,/g, ''); }).filter(function (x) { return x === '' || !isNaN(parseFloat(x)); }); };
+  bg.querySelector('#bkTxt').oninput = function (e) { bg.querySelector('#bkPrev').textContent = 'อ่านได้ ' + parse(e.target.value).length + ' ค่า'; };
+}
+
+/* ---------------- จัดระเบียบงานส่วนและหมวดงาน (เปลี่ยนชื่อ / รวม / ลบ) ---------------- */
+function orgParts() {
+  var multi = isMulti();
+  var lists = { part: multi ? parts().slice() : [], cat: cats().slice() };
+  S.tasks.forEach(function (t) { if (multi && t.part && lists.part.indexOf(t.part) < 0) lists.part.push(t.part); if (t.cat && lists.cat.indexOf(t.cat) < 0) lists.cat.push(t.cat); });
+  var cnt = function (k, n) { return S.tasks.filter(function (t) { return t[k] === n; }).length; };
+  var sec = function (k, title) {
+    var L = lists[k]; if (!L.length) return '';
+    return '<h3>' + title + ' (' + L.length + ' รายการ)</h3><div class="tw"><table class="tbl"><thead><tr><th>#</th><th>ชื่อ (แก้ไขได้)</th><th class="num">รายการงาน</th><th>รวมเข้ากับ</th></tr></thead><tbody>' + L.map(function (n, i) {
+      return '<tr><td>' + (i + 1) + '</td><td><input class="i" data-on="' + k + '" data-i="' + i + '" value="' + esc(n) + '"></td><td class="num">' + cnt(k, n) + '</td><td><select class="i" data-om="' + k + '" data-i="' + i + '">' +
+        opts(L.map(function (x, j) { return [String(j), (j + 1) + '. ' + x]; }).filter(function (x) { return x[0] !== String(i); }), '', '– ไม่รวม –') + (cnt(k, n) ? '' : '<option value="del">ลบทิ้ง (ไม่มีรายการงาน)</option>') + '</select></td></tr>'; }).join('') + '</tbody></table></div>';
+  };
+  modal('<h2>จัดระเบียบงานส่วนและหมวดงาน</h2><p class="muted">ใช้รวมชื่อที่ซ้ำ/ย่อยเกินไป เช่น รั้วแต่ละช่วงให้อยู่ใน "งานรั้ว" เดียวกัน • รายการงานจะย้ายตามให้อัตโนมัติ ผลงานและประวัติไม่เปลี่ยน • ไฟล์ Excel รองรับอย่างละ 40</p>' +
+    (multi ? sec('part', 'งานส่วน') : '') + sec('cat', 'หมวดงาน'), async function (bg) {
+      var res = {};
+      ['part', 'cat'].forEach(function (k) {
+        var L = lists[k]; if (!L.length) return;
+        var name = L.map(function (n, i) { return (bg.querySelector('[data-on="' + k + '"][data-i="' + i + '"]').value || '').trim(); });
+        var tgt = L.map(function (n, i) { return bg.querySelector('[data-om="' + k + '"][data-i="' + i + '"]').value; });
+        var fin = function (i, seen) { seen = seen || {}; if (tgt[i] === '' || tgt[i] === 'del' || seen[i]) return i; seen[i] = 1; return fin(+tgt[i], seen); };
+        var map = {}, keep = [];
+        L.forEach(function (n, i) { if (tgt[i] === 'del') return; var j = fin(i); if (!name[j]) throw new Error('ชื่อ' + (k === 'part' ? 'งานส่วน' : 'หมวดงาน') + 'ต้องไม่ว่าง (แถวที่ ' + (j + 1) + ')');
+          map[n] = name[j]; if (keep.indexOf(name[j]) < 0) keep.push(name[j]); });
+        if (!keep.length) throw new Error('ต้องเหลืออย่างน้อย 1 ' + (k === 'part' ? 'งานส่วน' : 'หมวดงาน'));
+        res[k] = { map: map, keep: keep };
+      });
+      var changed = [];
+      S.tasks.forEach(function (t) { var c = false;
+        if (res.part && res.part.map[t.part] != null && res.part.map[t.part] !== t.part) { t.part = res.part.map[t.part]; c = true; }
+        if (res.cat && res.cat.map[t.cat] != null && res.cat.map[t.cat] !== t.cat) { t.cat = res.cat.map[t.cat]; c = true; }
+        if (c) { t.updated = new Date().toISOString(); changed.push(t); } });
+      if (res.part) S.P.parts = res.part.keep; if (res.cat) S.P.cats = res.cat.keep;
+      if (changed.length) await DB.putMany('tasks', changed); await saveProject();
+      toast('จัดระเบียบแล้ว' + (res.part ? ' • งานส่วน ' + res.part.keep.length : '') + ' • หมวดงาน ' + res.cat.keep.length + (changed.length ? ' • ย้ายรายการงาน ' + changed.length + ' รายการ' : ''), false, 4000); render();
+    }, 'บันทึก', true);
+}
+
 /* ---------------- PROJECT SETTINGS ---------------- */
 async function vProjSet() {
   var p = S.P;
   after(function () { var box = $('#projFormBox'); if (box) wireProjectForm(box); });
   return pageHead('ตั้งค่าโครงการ', 'ข้อมูลสัญญา ผู้เกี่ยวข้อง งานส่วน และหมวดงาน', '') + '<div class="card" id="projFormBox"><h2>ข้อมูลโครงการ</h2>' + projectForm(p) +
     '<div class="row" style="margin-top:14px"><button class="btn" data-act="saveProj">บันทึก</button></div></div>' +
+    '<div class="card"><div class="card-h"><h2>จัดระเบียบงานส่วนและหมวดงาน</h2><button class="btn sec" data-act="orgParts">' + ic('edit') + 'เปลี่ยนชื่อ / รวม / ลบ</button></div><p class="muted">' + (isMulti() ? 'งานส่วน ' + parts().length + ' • ' : '') + 'หมวดงาน ' + cats().length + ' รายการ • การแก้ชื่อในช่องด้านบนไม่ย้ายรายการงานตาม ให้ใช้ปุ่มนี้แทน รายการงานจะย้ายตามอัตโนมัติ (ไฟล์ Excel รองรับอย่างละ 40)</p></div>' +
+    '<div class="card"><h2>บันทึกผลงานย้อนหลัง</h2><p class="muted">โครงการที่เริ่มงานไปก่อนใช้แอป หรือช่วงที่ไม่ได้บันทึกรายงานประจำวัน – กรอกผลงานสะสมรายงวดจากเอกสารที่ตรวจสอบได้ เพื่อให้ S-Curve และรายงานถูกต้อง</p><button class="btn sec" data-go="/p/' + p.id + '/back">' + ic('edit') + 'ไปที่บันทึกผลงานย้อนหลัง</button></div>' +
     '<div class="card"><h2>ส่งออกและสำรองข้อมูล</h2><div class="row"><button class="btn" data-act="exportV4">' + ic('excel') + 'รายงาน Excel (รูปแบบ v4)</button><button class="btn sec" data-act="exportXlsx">' + ic('download') + 'ข้อมูลดิบ Excel</button><button class="btn sec" data-act="backup">' + ic('backup') + 'สำรองข้อมูลทั้งหมด</button></div>' +
     '<p class="muted"><b>รายงาน Excel (รูปแบบ v4)</b> – ไฟล์ควบคุมงานฉบับเต็ม 13–14 ชีต (Dashboard, รายงาน, Gantt, S-Curve, งวดงาน, เงินงวด, VO, ขยายเวลา, วัสดุ ฯลฯ) พร้อมสูตรและกราฟ คำนวณใหม่เมื่อเปิดใน Excel • <b>ข้อมูลดิบ</b> – ตารางข้อมูลสำหรับวิเคราะห์ต่อ • ทั้งสองแบบนำเข้ากลับเป็นโครงการใหม่ได้</p></div>' +
     '<div class="card"><h2>จัดการโครงการ</h2><div class="row"><button class="btn sec" data-act="archive">' + (p.archived ? 'นำออกจากคลัง' : 'เก็บเข้าคลัง (โครงการจบแล้ว)') + '</button>' +
@@ -1013,6 +1201,18 @@ function weeklyFinSection() {
     return '<tr><td>' + esc(i.no) + '</td><td>' + esc(i.scope) + '</td><td>' + th(i.due, true) + '</td><td class="num">' + money(num(i.amount) + num(i.vo_amount)) + '</td><td>' + esc(instStatus(i).t) + '</td></tr>'; }).join('') + '</table>' : '<p>ยังไม่ได้บันทึกงวดงาน</p>') +
     '<p>ขยายเวลาที่อนุมัติแล้ว ' + eotTotal() + ' วัน • รอพิจารณา ' + pend + ' วัน • ค่าปรับวันละ ' + money(L.per) + ' บาท' + (L.late ? ' • <b>เลยกำหนดสัญญาแล้ว ' + L.late + ' วัน ค่าปรับ ' + money(L.incurred) + ' บาท</b>' : '') + '</p>';
 }
+// ตารางความก้าวหน้ารายงวด (ทุก 10 วัน) สำหรับนำเสนอที่ประชุม – รูปแบบเดียวกับตารางของผู้รับจ้าง/ชีต S-Curve
+function dashPeriodTable() {
+  var per = backPeriods(S.P.periodMode || '10d'), hist = histIndex(); if (!per.length) return '';
+  if (per.length > 36) per = backPeriods('m');
+  var rows = per.map(function (p) { var pl = planAt(p.e), ac = actualAt(p.e, hist); return { p: p, pl: pl, ac: ac }; });
+  var paid = function (p) { return S.installments.filter(function (it) { return it.accepted && it.accepted >= iso(p.s) && it.accepted <= iso(p.e); }).reduce(function (a, it) { return a + payOf(it).net; }, 0); };
+  var cum = 0, hasPay = S.installments.some(function (it) { return it.accepted; });
+  return '<h3>ความก้าวหน้ารายงวด</h3><table><tr><th>งวด</th><th>สิ้นงวด</th><th class="num">แผนสะสม</th><th class="num">ผลงานจริงในงวด</th><th class="num">ผลงานจริงสะสม</th><th class="num">ผลต่าง</th>' + (hasPay ? '<th class="num">เบิกจ่ายสะสม (บาท)</th>' : '') + '</tr>' +
+    rows.map(function (r, i) { var d = r.ac - r.pl; cum += hasPay ? paid(r.p) : 0;
+      return '<tr><td>' + r.p.n + '</td><td>' + th(r.p.e, true) + (r.p.partial ? '*' : '') + '</td><td class="num">' + pct(r.pl) + '</td><td class="num">' + pct(r.ac - (i ? rows[i - 1].ac : 0)) + '</td><td class="num"><b>' + pct(r.ac) + '</b></td><td class="num">' + (d >= 0 ? '+' : '') + pct(d) + '</td>' + (hasPay ? '<td class="num">' + (cum ? money(cum) : '-') + '</td>' : '') + '</tr>'; }).join('') + '</table>' +
+    '<p style="font-size:13pt">' + (per[per.length - 1].partial ? '* งวดปัจจุบัน ข้อมูลถึงวันที่ ' + th(today(), true) + ' • ' : '') + 'ผลงานจริงคิดจากประวัติผลงานรายรายการ' + (backHasData() ? ' และข้อมูลที่บันทึกย้อนหลัง' + (S.P.backSrc ? ' อ้างอิง ' + esc(S.P.backSrc) : '') : '') + '</p>';
+}
 function docDash() {
   var p = S.P, d = today(), pl = planAt(d), ac = actualNow(), L = ldInfo();
   var rows = [['ผลงานตามแผนสะสม', pct(pl)], ['ผลงานจริงสะสม', pct(ac)], ['เร็ว (+) / ช้า (−) กว่าแผน', (ac - pl >= 0 ? '+' : '') + pct(ac - pl) + ' (' + Math.round((ac - pl) * projDur()) + ' วัน)'], ['SPI', (pl ? ac / pl : 0).toFixed(2)],
@@ -1021,7 +1221,7 @@ function docDash() {
   after(function () { drawCurve($('#dcurve')); });
   return '<div class="doc"><h1>สรุปสถานะโครงการ</h1><p style="text-align:center;margin-top:-4px">ข้อมูล ณ วันที่ ' + th(d) + '</p>' + docHead() +
     '<h3>ตัวชี้วัดหลัก</h3><table>' + rows.map(function (r) { return '<tr><td style="width:45%">' + r[0] + '</td><td>' + r[1] + '</td></tr>'; }).join('') + '</table>' +
-    '<div class="chartbox" style="height:250px;margin-top:10px"><canvas id="dcurve"></canvas></div>' + pk +
+    '<div class="chartbox" style="height:250px;margin-top:10px"><canvas id="dcurve"></canvas></div>' + dashPeriodTable() + pk +
     '<div class="sig1">ลงชื่อ ..........................................<br>(' + esc(p.supervisor_name || '..........................................') + ')<br>' + esc(p.supervisor_pos || 'ผู้ควบคุมงาน') + '</div></div>';
 }
 
@@ -1154,9 +1354,9 @@ async function vApp() {
   var aiHtml = '<div class="card"><h2>AI ตรวจสเปกวัสดุ</h2>' +
     (aiSandboxed() ? '<div class="banner warn">' + ic('alert') + '<span class="grow">หน้าทดลองนี้ไม่อนุญาตให้เชื่อมต่อภายนอก – AI ใช้ได้เมื่อเปิดแอปจาก GitHub Pages</span></div>' : '') +
     '<label class="f">ผู้ให้บริการ AI</label><div class="seg" id="aiProv"><button data-prov="gemini" class="' + (gem ? 'on' : '') + '">Google Gemini (ฟรี)</button><button data-prov="claude" class="' + (gem ? '' : 'on') + '">Claude (เสียค่าใช้จ่าย)</button></div>' +
-    '<div id="aiGem" class="' + (gem ? '' : 'hidden') + '"><p class="muted" style="margin-top:10px"><b>วิธีรับคีย์ฟรี:</b> เข้า <b>aistudio.google.com</b> ด้วยบัญชี Google → <b>Get API key</b> → <b>Create API key</b> → คัดลอกคีย์ (คีย์แบบใหม่ขึ้นต้นด้วย <b>AQ.</b> – คีย์เดิมที่ขึ้นต้น AIza ก็ใช้ได้) มาวางด้านล่าง • ไม่ต้องใช้บัตรเครดิต</p>' +
+    '<div id="aiGem" class="' + (gem ? '' : 'hidden') + '"><p class="muted" style="margin-top:10px"><b>วิธีรับคีย์ฟรี:</b> เข้า <b>aistudio.google.com</b> ด้วยบัญชี Google → <b>Get API key</b> → <b>Create API key</b> → คัดลอกคีย์ (คีย์แบบใหม่ขึ้นต้นด้วย <b>AQ\u002E</b> – คีย์เดิมที่ขึ้นต้น AI\u007Aa ก็ใช้ได้) มาวางด้านล่าง • ไม่ต้องใช้บัตรเครดิต</p>' +
     '<div class="banner warn">' + ic('alert') + '<span class="grow">แบบฟรี: Google อาจนำข้อมูลที่ส่งตรวจไปใช้ปรับปรุงบริการ และจำกัดจำนวนครั้งต่อนาที/ต่อวัน – อย่าส่งเอกสารลับของทางราชการ</span></div>' +
-    '<div class="grid2">' + inp('aiGKey', 'Gemini API key (AQ.… หรือ AIza…)' + (ai.gkey ? ' – บันทึกไว้แล้ว: ' + esc(mask(ai.gkey)) : ''), '', 'text', 'autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true" data-form-type="other" placeholder="' + (ai.gkey ? 'เว้นว่างถ้าไม่เปลี่ยนคีย์' : 'วางคีย์ที่คัดลอกจาก AI Studio') + '"') + '<div><label class="f" for="aiGModel">รุ่นโมเดล Gemini</label><select id="aiGModel" class="i">' + geminiOpts(ai) + '</select></div></div>' +
+    '<div class="grid2">' + inp('aiGKey', 'Gemini API key (AQ\u002E… หรือ AI\u007Aa…)' + (ai.gkey ? ' – บันทึกไว้แล้ว: ' + esc(mask(ai.gkey)) : ''), '', 'text', 'autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true" data-form-type="other" placeholder="' + (ai.gkey ? 'เว้นว่างถ้าไม่เปลี่ยนคีย์' : 'วางคีย์ที่คัดลอกจาก AI Studio') + '"') + '<div><label class="f" for="aiGModel">รุ่นโมเดล Gemini</label><select id="aiGModel" class="i">' + geminiOpts(ai) + '</select></div></div>' +
     '<p class="muted">' + (ai.gmodels && ai.gmodels.length ? 'พบ ' + ai.gmodels.length + ' รุ่นในบัญชีของคุณ • แนะนำ Flash (แม่นยำดีและฟรี) ถ้าเกินโควตาบ่อยให้เลือก Flash-Lite • รุ่น Pro แม่นที่สุดแต่อาจต้องเปิด billing' : 'กด <b>ทดสอบการเชื่อมต่อ / โหลดรายชื่อรุ่น</b> เพื่อดึงรายชื่อรุ่นที่บัญชีของคุณใช้ได้') + '</p></div>' +
     '<div id="aiCla" class="' + (gem ? 'hidden' : '') + '"><p class="muted" style="margin-top:10px">console.anthropic.com → เติมเครดิต → API Keys • มีค่าใช้จ่ายตามการใช้งาน</p>' +
     '<div class="grid2">' + inp('aiKey', 'Claude API key (sk-ant-…)' + (ai.key ? ' – บันทึกไว้แล้ว: ' + esc(mask(ai.key)) : ''), '', 'text', 'autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true" data-form-type="other" placeholder="' + (ai.key ? 'เว้นว่างถ้าไม่เปลี่ยนคีย์' : 'sk-ant-…') + '"') + (ai.cmodels && ai.cmodels.length ? '<div><label class="f" for="aiModel">รุ่นโมเดล Claude</label><select id="aiModel" class="i">' + opts(ai.cmodels.indexOf(ai.model) >= 0 ? ai.cmodels : [ai.model].concat(ai.cmodels), ai.model) + '</select></div>' : inp('aiModel', 'รุ่นโมเดล Claude', ai.model || AI_DEFAULT_MODEL)) + '</div></div>' +
@@ -1298,6 +1498,9 @@ async function doInstall() {
 }
 /* ---------------- EVENTS ---------------- */
 document.addEventListener('click', async function (e) {
+  var bkb = e.target.closest('[data-bkper],[data-bktab],[data-bkunit]');
+  if (bkb) { var sv = $('#bkSrc'); if (sv) { BK.src = sv.value; BK.pid = S.P.id; }
+    if (bkb.dataset.bkper) BK.per = bkb.dataset.bkper; if (bkb.dataset.bktab) BK.tab = bkb.dataset.bktab; if (bkb.dataset.bkunit) BK.unit = bkb.dataset.bkunit; return render(); }
   var pv = e.target.closest('[data-prov]');
   if (pv) { $$('#aiProv button').forEach(function (b) { b.classList.toggle('on', b === pv); }); $('#aiGem').classList.toggle('hidden', pv.dataset.prov !== 'gemini'); $('#aiCla').classList.toggle('hidden', pv.dataset.prov !== 'claude'); return; }
   var el = e.target.closest('[data-go],[data-act],[data-prog],[data-task],[data-tf],[data-tp],[data-open],[data-fdel],[data-sub],[data-addrow],[data-ldel],[data-fill],[data-wph],[data-chkall],[data-theme],[data-inst],[data-vo],[data-eot]');
@@ -1347,6 +1550,11 @@ document.addEventListener('click', async function (e) {
     else if (a === 'install') { await doInstall(); }
     else if (a === 'wipe') { if (await confirmBox('ลบข้อมูลทุกโครงการในเครื่องนี้? (ถ้าเปิดซิงก์ไว้ ข้อมูลบนคลาวด์ยังอยู่และจะถูกดึงกลับเมื่อซิงก์ครั้งถัดไป)', 'ลบทั้งหมด')) { for (var q = 0; q < STORES.length; q++) if (STORES[q] !== 'meta') await DB.clear(STORES[q]); await syncResetLocal(); S.P = null; toast('ล้างข้อมูลในเครื่องแล้ว'); go('/'); } }
     else if (a === 'pasteTasks') pasteTasks();
+    else if (a === 'orgParts') orgParts();
+    else if (a === 'bkSaveProj') await backSaveProj();
+    else if (a === 'bkSaveTask') await backSaveTask();
+    else if (a === 'bkPaste') backPaste();
+    else if (a === 'bkClearProj') { if (await confirmBox('ล้างผลงานรวมระดับโครงการที่บันทึกย้อนหลังทั้งหมด? (ไม่กระทบผลงานรายรายการ)', 'ล้างค่า')) { S.P.actualSeries = []; await saveProject(); toast('ล้างแล้ว'); render(); } }
     else if (a === 'saveProj') { var box = $('#projFormBox'); readProjectForm(box, S.P); await saveProject(); toast('บันทึกแล้ว'); render(); }
     else if (a === 'archive') { S.P.archived = !S.P.archived; await saveProject(); toast(S.P.archived ? 'เก็บเข้าคลังแล้ว' : 'นำออกจากคลังแล้ว'); render(); }
     else if (a === 'delProject') {
@@ -1372,7 +1580,7 @@ document.addEventListener('click', async function (e) {
     else if (a === 'aiSave') {
       var cfg = await aiCfg(), prov = ($('#aiProv button.on') || {}).dataset ? $('#aiProv button.on').dataset.prov : 'gemini', gk = $('#aiGKey').value.replace(/\s+/g, ''), ck = $('#aiKey').value.replace(/\s+/g, '');
       cfg.provider = prov;
-      if (gk && gk.indexOf('••') !== 0) { if (!geminiKeyOk(gk)) throw new Error('Gemini API key ไม่ถูกต้อง – คีย์ต้องขึ้นต้นด้วย AQ. (แบบใหม่) หรือ AIza (แบบเดิม) และคัดลอกให้ครบทุกตัวอักษร'); cfg.gkey = gk; cfg.gmodel = ''; }
+      if (gk && gk.indexOf('••') !== 0) { if (!geminiKeyOk(gk)) throw new Error('Gemini API key ไม่ถูกต้อง – คีย์ต้องขึ้นต้นด้วย AQ\u002E (แบบใหม่) หรือ AI\u007Aa (แบบเดิม) และคัดลอกให้ครบทุกตัวอักษร'); cfg.gkey = gk; cfg.gmodel = ''; }
       if (ck && ck.indexOf('••') !== 0) { if (!/^sk-ant-/.test(ck)) throw new Error('Claude API key ต้องขึ้นต้นด้วย sk-ant-'); cfg.key = ck; }
       if (!(gk && gk.indexOf('••') !== 0)) cfg.gmodel = $('#aiGModel').value;
       cfg.model = String($('#aiModel').value).trim() || AI_DEFAULT_MODEL; cfg.limit = Math.max(1, Math.round(num($('#aiLimit').value) || 30));
@@ -1440,6 +1648,7 @@ document.addEventListener('input', function (e) {
 document.addEventListener('change', async function (e) {
   var t = e.target;
   try {
+    if (t.id === 'bkPart') { var sv = $('#bkSrc'); if (sv) { BK.src = sv.value; BK.pid = S.P.id; } BK.part = t.value; render(); return; }
     if (t.dataset.up) { var n = await addFiles(t.dataset.up, t.dataset.ref, t.files, t.dataset.pdf === '1'); if (n && t.dataset.up === 'daily' && !S.dailySaved) await saveDaily(); render(); return; }
     if (t.dataset.cap) { var f = S.files.filter(function (x) { return x.id === t.dataset.cap; })[0]; if (f) { f.caption = t.value.trim(); await DB.put('files', f); toast('บันทึกคำอธิบายแล้ว'); } return; }
     if (t.dataset.dd && S.dailyDraft && t.tagName === 'SELECT') { S.dailyDraft[t.id] = t.value; await saveDaily(); return; }
@@ -1852,6 +2061,7 @@ XSheet.prototype.set = function (ref, v) {
   c.setAttribute('t', 'inlineStr'); var is = this.doc.createElementNS(X_NS, 'is'), t = this.doc.createElementNS(X_NS, 't');
   t.setAttributeNS('http://www.w3.org/XML/1998/namespace', 'xml:space', 'preserve'); t.textContent = String(v); is.appendChild(t); c.appendChild(is);
 };
+XSheet.prototype.hideRows = function (r1, r2) { for (var r = r1; r <= r2; r++) this.row(r).setAttribute('hidden', '1'); };
 XSheet.prototype.clearCols = function (cols, r1, r2) { for (var r = r1; r <= r2; r++) for (var i = 0; i < cols.length; i++) this.set(cols[i] + r, ''); };
 XSheet.prototype.text = function (ref) {
   var c = this.cells[ref]; if (!c) return '';
@@ -1888,7 +2098,8 @@ async function exportV4() {
   var multi = isMulti() || parts().length > 1 || S.tasks.length > 60, kind = multi ? 'multi' : 'single';
   var cap = multi ? 150 : 60;
   if (S.tasks.length > cap) throw new Error('รายการงานเกิน ' + cap + ' รายการ ซึ่งเป็นความจุของแม่แบบ Excel');
-  if (parts().length > 10 || cats().length > 10) throw new Error('แม่แบบ Excel รองรับงานส่วนและหมวดงานไม่เกินอย่างละ 10');
+  var NP = parts().length, NC = cats().length, XCAP = 40;
+  if ((multi && NP > XCAP) || NC > XCAP) throw new Error('ไฟล์ Excel รองรับ' + (multi ? 'งานส่วนและ' : '') + 'หมวดงานได้อย่างละไม่เกิน ' + XCAP + ' รายการ (โครงการนี้มี' + (multi ? 'งานส่วน ' + NP + ' • ' : '') + 'หมวดงาน ' + NC + ') – รวมรายการที่ซ้ำหรือย่อยเกินไปได้ที่ ตั้งค่าโครงการ › จัดระเบียบงานส่วนและหมวดงาน');
   var zip = await JSZip.loadAsync(await tplBuffer(kind));
   var wbXml = await zip.file('xl/workbook.xml').async('string'), relXml = await zip.file('xl/_rels/workbook.xml.rels').async('string');
   var wbDoc = new DOMParser().parseFromString(wbXml, 'application/xml'), relDoc = new DOMParser().parseFromString(relXml, 'application/xml');
@@ -1906,17 +2117,25 @@ async function exportV4() {
   [['C4', p.name], ['C5', ''], ['C6', p.employer], ['C7', p.contractor], ['C8', p.contract_no], ['C9', n0(p.bac)], ['C10', dt(p.start)], ['C11', n0(p.duration)],
     ['C15', xlDate(iso(d))], ['C17', F.ldRate / 100], ['C18', F.ldMin], ['C19', F.ldCap / 100], ['C22', p.supervisor_name || '']].forEach(function (x) { su.set(x[0], x[1]); });
   for (var r = 4; r <= 22; r++) if (/ตัวอย่าง|จากเอกสาร|อ่านจาก|EXAMPLE/.test(su.text('D' + r))) su.set('D' + r, '');
-  if (multi) { su.clearCols(['C'], 26, 35); su.clearCols(['C'], 38, 47); parts().forEach(function (x, i) { su.set('C' + (26 + i), x); }); cats().forEach(function (x, i) { su.set('C' + (38 + i), x); }); }
-  else { su.clearCols(['C'], 26, 35); cats().forEach(function (x, i) { su.set('C' + (26 + i), x); }); }
+  // แม่แบบรองรับอย่างละ 40 รายการ • แถวที่ไม่ได้ใช้ซ่อนไว้ (เลิกซ่อนใน Excel ได้ถ้าต้องการเพิ่มเอง)
+  if (multi) {
+    su.clearCols(['C'], 26, 65); su.clearCols(['C'], 68, 107);
+    parts().forEach(function (x, i) { su.set('C' + (26 + i), x); }); cats().forEach(function (x, i) { su.set('C' + (68 + i), x); });
+    su.hideRows(26 + Math.max(NP, 10), 65); su.hideRows(68 + Math.max(NC, 10), 107);
+    var smy = await sh('สรุปงานส่วน Summary'); smy.hideRows(7 + Math.max(NP, 1), 46); smy.hideRows(72 + Math.max(NC, 1), 111);
+  } else {
+    su.clearCols(['C'], 26, 65); cats().forEach(function (x, i) { su.set('C' + (26 + i), x); }); su.hideRows(26 + Math.max(NC, 10), 65);
+    var rpt = await sh('รายงาน Report'); rpt.hideRows(23 + Math.max(NC, 1), 62);
+  }
   // ---- แผนงาน
-  var sc = await sh('แผนงาน Schedule'), RN = multi ? 156 : 66;
+  var sc = await sh('แผนงาน Schedule'), RN = multi ? 156 : 66, useSeries = seriesDominant();
   var M = multi ? { part: 'B', cat: 'C', desc: 'D', boq: 'E', w: 'F', bs: 'I', bf: 'J', rs: 'L', rf: 'M', as: 'N', af: 'O', pct: 'P', rm: 'Z' }
     : { cat: 'B', desc: 'C', boq: 'D', w: 'E', bs: 'H', bf: 'I', rs: 'K', rf: 'L', as: 'M', af: 'N', pct: 'O', rm: 'Y' };
   sc.clearCols(Object.keys(M).map(function (k) { return M[k]; }), 7, RN);
   wbsList().forEach(function (o, i) { var t = o.t, r = 7 + i;
     if (multi) sc.set(M.part + r, t.part); sc.set(M.cat + r, t.cat); sc.set(M.desc + r, t.desc); sc.set(M.boq + r, n0(t.boq)); sc.set(M.w + r, pctF(t.weight));
     ['bs', 'bf', 'rs', 'rf', 'as', 'af'].forEach(function (k) { sc.set(M[k] + r, dt(t[k])); });
-    sc.set(M.pct + r, num(t.pct) / 100); sc.set(M.rm + r, t.remark || ''); });
+    if (!useSeries) sc.set(M.pct + r, num(t.pct) / 100); sc.set(M.rm + r, t.remark || ''); });
   // ---- S-Curve (ค่าสะสมจริงรายงวดจากประวัติผลงาน + เงินเบิกจ่าย)
   var cv = await sh('S-Curve'), hist = histIndex(), per = tplPeriods(multi);
   cv.clearCols(['F', 'K', 'M'], 7, 86);
@@ -2027,8 +2246,8 @@ function pickGemini(ids) {
   var c = ids.filter(function (id) { return /^gemini-[\d.]+-flash/.test(id) && !/image|tts|audio|live|thinking|embedding/.test(id); });
   return c.sort(function (a, b) { return score(b) - score(a); })[0] || ids.filter(function (id) { return /flash/.test(id); })[0] || '';
 }
-// คีย์ Gemini: แบบใหม่ขึ้นต้น "AQ." (Auth key ตั้งแต่ มิ.ย. 2569) และแบบเดิม "AIza" • ส่งผ่าน header ก่อน ถ้าไม่ผ่านลองส่งทาง ?key=
-function geminiKeyOk(k) { return /^AQ\.[\w.\-]{16,}$/.test(k) || /^AIza[\w\-]{20,}$/.test(k); }
+// คีย์ Gemini: แบบใหม่ขึ้นต้น "AQ" ตามด้วยจุด (Auth key ตั้งแต่ มิ.ย. 2569) และแบบเดิม "AI-za" • ส่งผ่าน header ก่อน ถ้าไม่ผ่านลองส่งทาง ?key=
+function geminiKeyOk(k) { return /^AQ[.][\w.\-]{16,}$/.test(k) || /^AI[z]a[\w\-]{20,}$/.test(k); }
 async function gfetch(url, opts, key) {
   opts = opts || {}; var r = null;
   try { r = await fetch(url, Object.assign({}, opts, { headers: Object.assign({}, opts.headers || {}, { 'x-goog-api-key': key }) })); } catch (e) { if (e.name === 'AbortError') throw e; }
